@@ -48,9 +48,18 @@ class TestPubSubPublish:
 
                 mock_publisher.publish.assert_called_once()
                 call_args = mock_publisher.publish.call_args
-                data = json.loads(call_args[1]["data"].decode("utf-8"))
-                assert data["workflow_id"] == "wf-1"
-                assert data["data"] == "hello"
+                envelope = json.loads(call_args[1]["data"].decode("utf-8"))
+                # Envelope-level fields
+                assert envelope["workflow_id"] == "wf-1"
+                assert envelope["event_type"] == "topic"
+                assert envelope["source_agent"] == "validator-agent"
+                assert "event_id" in envelope
+                assert "timestamp" in envelope
+                assert "correlation_id" in envelope
+                # Inner payload preserved
+                assert envelope["payload"]["workflow_id"] == "wf-1"
+                assert envelope["payload"]["data"] == "hello"
+                # Message attributes still present
                 assert call_args[1]["workflow_id"] == "wf-1"
                 assert call_args[1]["source_agent"] == "validator-agent"
 

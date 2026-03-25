@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 import structlog
@@ -44,14 +46,51 @@ class PubSubEventPublisherAdapter(EventPublisherPort):
         self._subscriber = pubsub_v1.SubscriberClient()
         self._poll_tasks: list[asyncio.Task] = []
 
-    async def publish(self, *, topic: str, payload: dict[str, Any]) -> None:
-        """Publish a completion event to Pub/Sub."""
-        topic_path = self._publisher.topic_path(self._project_id, topic)
-        message_data = json.dumps(payload).encode("utf-8")
-
+    @staticmethod
+    def _build_envelope(
+        event_type: str, payload: dict[str, Any], source_agent: str,
+    ) -> dict[str, Any]:
+        """Wrap a flat payload in the standard Pub/Sub envelope (pubsub.md 5.1)."""
         workflow_id = payload.get("workflow_id", "unknown")
+        return {
+            "event_id": str(uuid.uuid4()),
+            "event_type": event_type,
+            "workflow_id": workflow_id,
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+            "source_agent": source_agent,
+            "correlation_id": payload.get("workflow_id", str(uuid.uuid4())),
+            "payload": payload,
+        }
 
-        logger.info("pubsub_publish", topic=topic, workflow_id=workflow_id)
+    @staticmethod
+    def _derive_event_type(topic: str) -> str:
+        """Derive event_type from topic name.
+
+        e.g. 'assessorflow.validation.complete' -> 'validation.complete'
+        """
+        parts = topic.split(".")
+        return ".".join(parts[1:]) if len(parts) > 1 else topic
+
+    async def publish(self, *, topic: str, payload: dict[str, Any]) -> None:
+        """Publish a completion event to Pub/Sub.
+
+        Automatically wraps the payload in the standard Pub/Sub envelope
+        per pubsub.md Section 5.1.
+        """
+        topic_path = self._publisher.topic_path(self._project_id, topic)
+
+        event_type = self._derive_event_type(topic)
+        envelope = self._build_envelope(event_type, payload, "validator-agent")
+        message_data = json.dumps(envelope).encode("utf-8")
+
+        workflow_id = envelope["workflow_id"]
+
+        logger.info(
+            "pubsub_publish",
+            topic=topic,
+            workflow_id=workflow_id,
+            event_type=event_type,
+        )
 
         future = self._publisher.publish(
             topic_path,
@@ -92,10 +131,13 @@ class PubSubEventPublisherAdapter(EventPublisherPort):
                         timeout=5.0,
                     )
                     for msg in response.received_messages:
-                        payload = json.loads(msg.message.data.decode("utf-8"))
+                        raw = json.loads(msg.message.data.decode("utf-8"))
+                        # Unwrap standard envelope — pass inner payload to handler
+                        payload = raw.get("payload", raw)
                         logger.info(
                             "pubsub_received",
                             subscription=subscription,
+                            envelope_event_type=raw.get("event_type"),
                             workflow_id=payload.get("workflow_id", "?"),
                         )
                         try:
