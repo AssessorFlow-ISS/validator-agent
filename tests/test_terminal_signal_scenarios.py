@@ -338,3 +338,357 @@ class TestDecisionAuditLogging:
         payload = da_ref.entries[0].payload
         assert payload["terminal_signal"]["status"] == "TERMINATE"
         assert payload["terminal_signal"]["reason_code"] == "BLURRY_UNREADABLE"
+
+
+# ===========================================================================
+# GAP-10: Multi-file partial TERMINATE scenarios
+# ===========================================================================
+
+def _make_multi_file_request(
+    *,
+    workflow_id: str = "wf-multi-001",
+    assessment_id: str = "assess-multi-001",
+    file_count: int = 3,
+) -> tuple[ValidationRequest, list[FileInfo]]:
+    """Build a multi-file ValidationRequest with N files.
+
+    Returns (request, files) so callers can reference individual file paths
+    when configuring per-file stub overrides.
+    """
+    files = [
+        FileInfo(
+            file_name=f"document_{i}.pdf",
+            storage_path=f"materials/{workflow_id}/document_{i}.pdf",
+            file_type="pdf",
+        )
+        for i in range(1, file_count + 1)
+    ]
+    request = ValidationRequest(
+        workflow_id=workflow_id,
+        assessment_id=assessment_id,
+        validation_type="material_validation",
+        files=files,
+    )
+    return request, files
+
+
+class TestMultiFilePartialTerminate:
+    """GAP-10: Multiple files where one fails should TERMINATE the workflow.
+
+    The ValidatorService processes all files sequentially (no short-circuit)
+    and returns an overall TERMINATE if ANY file has a TERMINATE signal.
+    The overall signal uses the first TERMINATE found in file_results.
+    """
+
+    async def test_file_2_harmful_overall_terminates(self) -> None:
+        """3 files — file 2 has harmful content — overall must be TERMINATE.
+
+        Files 1 and 3 are clean; file 2 contains harmful keywords that
+        trigger the StubModelBrokerAdapter's HARMFUL_CONTENT detection.
+        """
+        request, files = _make_multi_file_request()
+        harmful_text = (
+            "This extremist manifesto contains dangerous ideological content "
+            "that promotes violence and describes weapon construction methods."
+        )
+        ocr = StubOcrAdapter(
+            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
+                encoding="utf-8",
+            ),
+            overrides={
+                files[1].storage_path: harmful_text,
+            },
+        )
+        service, _ = _build_service(ocr=ocr)
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.terminal_signal.reason_code == ReasonCode.HARMFUL_CONTENT
+
+        # Per-file results: file 1 PROCEED, file 2 TERMINATE, file 3 PROCEED
+        assert len(response.file_results) == 3
+        assert response.file_results[0].terminal_signal.status == TerminalSignalStatus.PROCEED
+        assert response.file_results[1].terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.file_results[1].terminal_signal.reason_code == ReasonCode.HARMFUL_CONTENT
+        assert response.file_results[2].terminal_signal.status == TerminalSignalStatus.PROCEED
+
+    async def test_file_1_harmful_overall_terminates(self) -> None:
+        """3 files — file 1 has harmful content — overall must be TERMINATE.
+
+        Even when the very first file fails, the service still processes all
+        files (no short-circuit) and returns TERMINATE with the first failing
+        file's signal.
+        """
+        request, files = _make_multi_file_request()
+        harmful_text = (
+            "This document describes bomb-making instructions and weapon "
+            "acquisition through illegal channels. Extremely dangerous content."
+        )
+        ocr = StubOcrAdapter(
+            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
+                encoding="utf-8",
+            ),
+            overrides={
+                files[0].storage_path: harmful_text,
+            },
+        )
+        service, _ = _build_service(ocr=ocr)
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.terminal_signal.reason_code == ReasonCode.HARMFUL_CONTENT
+
+        # File 1 is the first TERMINATE — overall signal should match it
+        assert response.file_results[0].terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.file_results[0].file_name == "document_1.pdf"
+
+    async def test_file_3_harmful_terminates_even_after_two_proceed(self) -> None:
+        """3 files — file 3 has harmful content — overall TERMINATE despite files 1+2 passing.
+
+        Validates that the service does not prematurely return PROCEED after
+        the first N files succeed. The tail-end failure still kills the workflow.
+        """
+        request, files = _make_multi_file_request()
+        harmful_text = (
+            "This extremist propaganda manifesto advocates for overthrow of "
+            "democratic institutions and describes recruitment of vulnerable individuals."
+        )
+        ocr = StubOcrAdapter(
+            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
+                encoding="utf-8",
+            ),
+            overrides={
+                files[2].storage_path: harmful_text,
+            },
+        )
+        service, _ = _build_service(ocr=ocr)
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.terminal_signal.reason_code == ReasonCode.HARMFUL_CONTENT
+
+        # Files 1 and 2 passed, file 3 failed
+        assert response.file_results[0].terminal_signal.status == TerminalSignalStatus.PROCEED
+        assert response.file_results[1].terminal_signal.status == TerminalSignalStatus.PROCEED
+        assert response.file_results[2].terminal_signal.status == TerminalSignalStatus.TERMINATE
+
+    async def test_all_files_clean_overall_proceeds(self) -> None:
+        """3 files — all clean — overall must be PROCEED.
+
+        Baseline case: when every file passes all checks, the overall signal
+        is PROCEED with VALIDATION_PASSED.
+        """
+        request, _files = _make_multi_file_request()
+        service, _ = _build_service()
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.PROCEED
+        assert response.terminal_signal.reason_code == ReasonCode.VALIDATION_PASSED
+        assert response.terminal_signal.message == "All files validated successfully"
+
+        # All three per-file results should be PROCEED
+        assert len(response.file_results) == 3
+        for file_result in response.file_results:
+            assert file_result.terminal_signal.status == TerminalSignalStatus.PROCEED
+
+    async def test_single_harmful_file_matches_single_file_terminate(self) -> None:
+        """1 file — harmful content — same behaviour as single-file TERMINATE.
+
+        Edge case: multi-file code path with a single-element list should
+        produce the same result as the existing single-file tests.
+        """
+        request, files = _make_multi_file_request(file_count=1)
+        harmful_text = (
+            "This extremist manifesto contains bomb-making instructions "
+            "and weapon acquisition details that violate content policies."
+        )
+        ocr = StubOcrAdapter(
+            default_text=harmful_text,
+        )
+        service, _ = _build_service(ocr=ocr)
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.terminal_signal.reason_code == ReasonCode.HARMFUL_CONTENT
+
+        # Single-file: file_results has exactly 1 entry
+        assert len(response.file_results) == 1
+        assert response.file_results[0].terminal_signal.status == TerminalSignalStatus.TERMINATE
+
+    async def test_terminate_reason_code_matches_failing_file_issue(self) -> None:
+        """Overall TERMINATE reason_code must match the specific failure type.
+
+        File 1: clean (PROCEED)
+        File 2: blurry/unreadable (MRC fail -> BLURRY_UNREADABLE)
+        File 3: clean (PROCEED)
+
+        The overall signal should carry BLURRY_UNREADABLE, not a generic code.
+        """
+        request, files = _make_multi_file_request()
+        mrc = StubMrcAdapter(
+            overrides={
+                files[1].storage_path: {
+                    "readiness": False,
+                    "confidence": 0.15,
+                },
+            },
+        )
+        service, _ = _build_service(mrc=mrc)
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
+        assert "document_2.pdf" in response.terminal_signal.message
+
+        # The specific file that failed
+        assert response.file_results[1].terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
+
+    async def test_first_terminate_wins_when_multiple_files_fail(self) -> None:
+        """When multiple files fail, the overall signal uses the FIRST TERMINATE.
+
+        File 1: blurry (BLURRY_UNREADABLE)
+        File 2: harmful content (HARMFUL_CONTENT)
+        File 3: clean (PROCEED)
+
+        _compute_overall_signal iterates file_results in order and returns the
+        first TERMINATE signal it finds — which should be BLURRY_UNREADABLE.
+        """
+        request, files = _make_multi_file_request()
+        harmful_text = (
+            "This extremist manifesto contains bomb-making instructions "
+            "and weapon details that are dangerous."
+        )
+        mrc = StubMrcAdapter(
+            overrides={
+                files[0].storage_path: {
+                    "readiness": False,
+                    "confidence": 0.12,
+                },
+            },
+        )
+        ocr = StubOcrAdapter(
+            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
+                encoding="utf-8",
+            ),
+            overrides={
+                files[1].storage_path: harmful_text,
+            },
+        )
+        service, _ = _build_service(mrc=mrc, ocr=ocr)
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+        # First failing file (file 1) is blurry — its reason_code wins
+        assert response.terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
+
+        # Verify per-file results reflect distinct failure types
+        assert response.file_results[0].terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
+        assert response.file_results[1].terminal_signal.reason_code == ReasonCode.HARMFUL_CONTENT
+        assert response.file_results[2].terminal_signal.status == TerminalSignalStatus.PROCEED
+
+    async def test_multi_file_audit_log_contains_all_reasoning_steps(self) -> None:
+        """Multi-file validation must log reasoning steps for ALL files.
+
+        Even when file 2 fails, the audit entry should contain the reasoning
+        steps from file 1 (passed), file 2 (failed), and file 3 (passed) —
+        because the service processes all files before aggregating.
+        """
+        request, files = _make_multi_file_request()
+        harmful_text = (
+            "This extremist manifesto contains dangerous weapon content "
+            "that should trigger content safety detection."
+        )
+        ocr = StubOcrAdapter(
+            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
+                encoding="utf-8",
+            ),
+            overrides={
+                files[1].storage_path: harmful_text,
+            },
+        )
+        da = StubDecisionAuditAdapter()
+        service, da_ref = _build_service(ocr=ocr, decision_audit=da)
+        response = await service.validate(request)
+
+        # Exactly one audit entry per validation invocation
+        assert len(da_ref.entries) == 1
+
+        payload = da_ref.entries[0].payload
+
+        # Overall terminal_signal in audit must be TERMINATE
+        assert payload["terminal_signal"]["status"] == "TERMINATE"
+
+        # Reasoning steps must span all 3 files
+        steps = payload["reasoning_steps"]
+        assert len(steps) > 0
+
+        # Step numbers must be sequential across all files (no gaps, no resets)
+        step_numbers = [s["step"] for s in steps]
+        assert step_numbers == list(range(1, len(steps) + 1))
+
+        # Must contain references to all 3 files
+        all_actions = " ".join(s["action"] for s in steps)
+        assert "document_1.pdf" in all_actions
+        assert "document_2.pdf" in all_actions
+        assert "document_3.pdf" in all_actions
+
+    async def test_multi_file_response_contains_all_file_results(self) -> None:
+        """Response file_results list must contain an entry for every input file.
+
+        This ensures the service does not drop results for files processed
+        after a TERMINATE is encountered.
+        """
+        request, files = _make_multi_file_request(file_count=5)
+        harmful_text = (
+            "This bomb-making manifesto describes weapon construction "
+            "methods and extremist recruitment strategies."
+        )
+        ocr = StubOcrAdapter(
+            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
+                encoding="utf-8",
+            ),
+            overrides={
+                files[2].storage_path: harmful_text,
+            },
+        )
+        service, _ = _build_service(ocr=ocr)
+        response = await service.validate(request)
+
+        # All 5 files must appear in file_results
+        assert len(response.file_results) == 5
+
+        # File names must match input order
+        for i, file_result in enumerate(response.file_results):
+            assert file_result.file_name == f"document_{i + 1}.pdf"
+
+        # Overall is TERMINATE because file 3 failed
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+
+    async def test_partial_terminate_pii_reason_code_propagates(self) -> None:
+        """Overall signal carries PII_DETECTED when a file contains PII.
+
+        File 1: clean (PROCEED)
+        File 2: PII content (TERMINATE with PII_DETECTED)
+        File 3: clean (PROCEED)
+        """
+        request, files = _make_multi_file_request()
+        pii_text = FIXTURES_DIR.joinpath("pii_content.txt").read_text(
+            encoding="utf-8",
+        )
+        ocr = StubOcrAdapter(
+            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
+                encoding="utf-8",
+            ),
+            overrides={
+                files[1].storage_path: pii_text,
+            },
+        )
+        service, _ = _build_service(ocr=ocr)
+        response = await service.validate(request)
+
+        assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
+        assert response.terminal_signal.reason_code == ReasonCode.PII_DETECTED
+
+        assert response.file_results[0].terminal_signal.status == TerminalSignalStatus.PROCEED
+        assert response.file_results[1].terminal_signal.reason_code == ReasonCode.PII_DETECTED
+        assert response.file_results[2].terminal_signal.status == TerminalSignalStatus.PROCEED
