@@ -42,6 +42,7 @@ class PubSubEventPublisherAdapter(EventPublisherPort):
 
         self._publisher = pubsub_v1.PublisherClient()
         self._subscriber = pubsub_v1.SubscriberClient()
+        self._poll_tasks: list[asyncio.Task] = []
 
     async def publish(self, *, topic: str, payload: dict[str, Any]) -> None:
         """Publish a completion event to Pub/Sub."""
@@ -107,16 +108,21 @@ class PubSubEventPublisherAdapter(EventPublisherPort):
                             )
                         except Exception:
                             logger.exception("pubsub_handler_error")
-                            self._subscriber.modify_ack_deadline(
-                                request={
-                                    "subscription": subscription_path,
-                                    "ack_ids": [msg.ack_id],
-                                    "ack_deadline_seconds": 0,
-                                }
-                            )
-                except Exception:
-                    pass  # Timeout or no messages — continue polling
-                await asyncio.sleep(2)
+                            try:
+                                self._subscriber.modify_ack_deadline(
+                                    request={
+                                        "subscription": subscription_path,
+                                        "ack_ids": [msg.ack_id],
+                                        "ack_deadline_seconds": 0,
+                                    }
+                                )
+                            except Exception:
+                                pass
+                except Exception as exc:
+                    exc_name = type(exc).__name__
+                    if exc_name not in ("DeadlineExceeded", "_InactiveRpcError"):
+                        logger.warning("pubsub_poll_error", error=str(exc), error_type=exc_name)
 
-        asyncio.create_task(_poll_loop())
+        task = asyncio.create_task(_poll_loop())
+        self._poll_tasks.append(task)
         logger.info("pubsub_subscribed", subscription=subscription)
