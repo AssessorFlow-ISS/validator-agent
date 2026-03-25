@@ -1,0 +1,18 @@
+Student Assessment Records - Confidential
+
+Student Name: John Smith
+Student ID: STU-2026-00142
+Email: john.smith@email.com
+SSN: 123-45-6789
+
+Assessment Results:
+- Module 1: Software Design Patterns - Score: 85/100
+- Module 2: Testing Strategies - Score: 92/100
+- Module 3: Agile Methodologies - Score: 78/100
+
+Social Security Number verification required for federal reporting: SSN: 987-65-4321
+
+Contact: jane.doe@email.com for grade appeals.
+
+This document contains personally identifiable information and should be flagged by the
+content safety validation pipeline.
