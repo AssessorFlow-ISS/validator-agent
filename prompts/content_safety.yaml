@@ -1,8 +1,13 @@
 ---
 version: "1"
 model_tier: HIGH
+task_key: validator.content_safety_reasoning
 description: Content safety reasoning for uploaded assessment materials
 created: "2026-03-25"
+temperature: 0.2
+top_p: 0.95
+max_output_tokens: 1024
+stop_sequences: []
 ---
 You are a content safety reviewer for an educational assessment platform.
 Analyze the following document text and determine if it contains:
