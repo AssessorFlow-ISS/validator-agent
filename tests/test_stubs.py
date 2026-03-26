@@ -107,7 +107,7 @@ class TestStubModelBrokerAdapter:
             prompt="Analyze this educational document about software patterns.",
             model_tier="HIGH",
         )
-        data = json.loads(response)
+        data = json.loads(response.content)
         assert data["is_safe"] is True
         assert data["reason_code"] == "VALIDATION_PASSED"
 
@@ -118,7 +118,7 @@ class TestStubModelBrokerAdapter:
             prompt="Document text: This extremist propaganda must be stopped.",
             model_tier="HIGH",
         )
-        data = json.loads(response)
+        data = json.loads(response.content)
         assert data["is_safe"] is False
         assert data["reason_code"] == "HARMFUL_CONTENT"
 
@@ -129,7 +129,7 @@ class TestStubModelBrokerAdapter:
             prompt="Contact john.doe@email.com for more info.",
             model_tier="HIGH",
         )
-        data = json.loads(response)
+        data = json.loads(response.content)
         assert data["is_safe"] is False
         assert data["reason_code"] == "PII_DETECTED"
 
@@ -140,7 +140,7 @@ class TestStubModelBrokerAdapter:
             prompt="ISBN: 978-0-13-468599-1 All rights reserved.",
             model_tier="HIGH",
         )
-        data = json.loads(response)
+        data = json.loads(response.content)
         assert data["is_safe"] is False
         # Either copyright from ISBN or "All rights reserved" — both should trigger
         assert data["reason_code"] == "COPYRIGHT_VIOLATION"

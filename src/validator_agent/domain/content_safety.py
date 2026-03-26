@@ -23,12 +23,25 @@ _PROMPT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "prompts"
 
 
 @dataclass(frozen=True)
+class LlmCallMetrics:
+    """Telemetry captured from a Model Broker LLM call."""
+
+    model_used: str
+    model_tier: str
+    tokens_input: int
+    tokens_output: int
+    cost_usd: float
+    latency_ms: float
+
+
+@dataclass(frozen=True)
 class SafetyResult:
     """Result of the content safety check."""
 
     is_safe: bool
     reason_code: ReasonCode
     message: str
+    llm_metrics: LlmCallMetrics | None = None
 
 
 def _load_prompt_template(name: str) -> tuple[str, dict]:
@@ -85,12 +98,28 @@ class ContentSafetyReasoner:
         prompt = re.sub(r"\{file_name\}", file_name, prompt)
         model_tier = self._frontmatter.get("model_tier", "HIGH")
 
-        raw_response = await self._model_broker.generate(
+        model_response = await self._model_broker.generate(
             prompt=prompt,
             model_tier=model_tier,
         )
 
-        return self._parse_response(raw_response, file_name)
+        result = self._parse_response(model_response.content, file_name)
+
+        # Attach LLM telemetry so the caller can forward to both sinks
+        metrics = LlmCallMetrics(
+            model_used=model_response.model_used,
+            model_tier=model_response.model_tier,
+            tokens_input=model_response.tokens_input,
+            tokens_output=model_response.tokens_output,
+            cost_usd=model_response.cost_usd,
+            latency_ms=model_response.latency_ms,
+        )
+        return SafetyResult(
+            is_safe=result.is_safe,
+            reason_code=result.reason_code,
+            message=result.message,
+            llm_metrics=metrics,
+        )
 
     @staticmethod
     def _parse_response(raw: str, file_name: str) -> SafetyResult:

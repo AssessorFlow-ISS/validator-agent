@@ -66,7 +66,10 @@ def _build_service(
     ep = event_publisher or StubEventPublisherAdapter()
     st = storage or StubStorageAdapter()
 
+    from validator_agent.adapters.tracing_stub import StubTracingAdapter
+
     content_safety = ContentSafetyReasoner(model_broker=model_broker)
+    tr = StubTracingAdapter()
     service = ValidatorService(
         mrc=mrc,
         ocr=ocr,
@@ -75,6 +78,7 @@ def _build_service(
         decision_audit=da,
         event_publisher=ep,
         storage=st,
+        tracing=tr,
     )
     return service, mrc, ocr, ks, da, st
 
