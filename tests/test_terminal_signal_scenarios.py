@@ -76,6 +76,8 @@ def _build_service(
     model_broker = model_broker or StubModelBrokerAdapter()
     da = decision_audit or StubDecisionAuditAdapter()
 
+    from validator_agent.adapters.tracing_stub import StubTracingAdapter
+
     content_safety = ContentSafetyReasoner(model_broker=model_broker)
     service = ValidatorService(
         mrc=mrc,
@@ -85,6 +87,7 @@ def _build_service(
         decision_audit=da,
         event_publisher=StubEventPublisherAdapter(),
         storage=StubStorageAdapter(),
+        tracing=StubTracingAdapter(),
     )
     return service, da
 

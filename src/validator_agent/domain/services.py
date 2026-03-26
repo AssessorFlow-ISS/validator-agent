@@ -14,6 +14,7 @@ immutable audit trail (Invariant #5).
 """
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -37,6 +38,7 @@ from validator_agent.ports.knowledge_service_port import KnowledgeServicePort
 from validator_agent.ports.mrc_port import MrcPort
 from validator_agent.ports.ocr_port import OcrPort
 from validator_agent.ports.storage_port import StoragePort
+from validator_agent.ports.tracing_port import TracingPort
 
 logger = structlog.get_logger(__name__)
 
@@ -61,6 +63,7 @@ class ValidatorService:
         decision_audit: DecisionAuditPort,
         event_publisher: EventPublisherPort,
         storage: StoragePort,
+        tracing: TracingPort,
     ) -> None:
         self._mrc = mrc
         self._ocr = ocr
@@ -69,12 +72,14 @@ class ValidatorService:
         self._decision_audit = decision_audit
         self._event_publisher = event_publisher
         self._storage = storage
+        self._tracing = tracing
 
     async def validate(self, request: ValidationRequest) -> ValidationResponse:
         """Run the full validation pipeline for all files in the request."""
         file_results: list[FileResult] = []
         reasoning_steps_all: list[dict] = []
         step_counter = 0
+        self._last_model_used: str | None = None
 
         for file_info in request.files:
             signal, steps, step_counter = await self._validate_single_file(
@@ -126,7 +131,9 @@ class ValidatorService:
 
         # -- Stage 2: MRC blur/readability check ----------------------------
         step_counter += 1
+        t0 = time.monotonic()
         mrc_result = await self._mrc.predict(file_info.storage_path)
+        mrc_latency = (time.monotonic() - t0) * 1000
         steps.append({
             "step": step_counter,
             "action": (
@@ -134,6 +141,14 @@ class ValidatorService:
                 f"confidence={mrc_result.confidence}"
             ),
         })
+        await self._tracing.trace_tool_call(
+            workflow_id=workflow_id,
+            agent_name="validator-agent",
+            tool_name="mrc-predict",
+            input_params={"file_path": file_info.storage_path},
+            output_summary={"readiness": mrc_result.readiness, "confidence": mrc_result.confidence},
+            latency_ms=mrc_latency,
+        )
 
         if not mrc_result.readiness:
             signal = TerminalSignal(
@@ -154,7 +169,9 @@ class ValidatorService:
 
         # -- Stage 3: OCR text extraction ------------------------------------
         step_counter += 1
+        t0 = time.monotonic()
         ocr_result = await self._ocr.extract_text(file_info.storage_path)
+        ocr_latency = (time.monotonic() - t0) * 1000
         extracted_length = len(ocr_result.text.strip()) if ocr_result.text else 0
         steps.append({
             "step": step_counter,
@@ -163,6 +180,14 @@ class ValidatorService:
                 f"(source_type: {ocr_result.source_type})"
             ),
         })
+        await self._tracing.trace_tool_call(
+            workflow_id=workflow_id,
+            agent_name="validator-agent",
+            tool_name="ocr-extract-text",
+            input_params={"file_path": file_info.storage_path},
+            output_summary={"chars_extracted": extracted_length, "source_type": ocr_result.source_type},
+            latency_ms=ocr_latency,
+        )
 
         if extracted_length < _MIN_OCR_TEXT_LENGTH:
             signal = TerminalSignal(
@@ -193,6 +218,30 @@ class ValidatorService:
                 f"{'no harmful content detected' if safety_result.is_safe else safety_result.message}"
             ),
         })
+
+        # Capture model_used for the decision log
+        if safety_result.llm_metrics:
+            self._last_model_used = safety_result.llm_metrics.model_used
+
+        # Trace LLM call to Langfuse (Sink 2) if metrics available
+        if safety_result.llm_metrics:
+            from validator_agent.ports.model_broker_port import ModelBrokerResponse
+
+            await self._tracing.trace_llm_call(
+                workflow_id=workflow_id,
+                agent_name="validator-agent",
+                task_key="content_safety",
+                prompt_version=self._content_safety.prompt_version,
+                model_response=ModelBrokerResponse(
+                    content="",
+                    model_used=safety_result.llm_metrics.model_used,
+                    model_tier=safety_result.llm_metrics.model_tier,
+                    tokens_input=safety_result.llm_metrics.tokens_input,
+                    tokens_output=safety_result.llm_metrics.tokens_output,
+                    cost_usd=safety_result.llm_metrics.cost_usd,
+                    latency_ms=safety_result.llm_metrics.latency_ms,
+                ),
+            )
 
         if not safety_result.is_safe:
             signal = TerminalSignal(
@@ -261,13 +310,15 @@ class ValidatorService:
         file_results: list[FileResult],
         reasoning_steps: list[dict],
     ) -> None:
-        """Log the validation decision to the Decision Audit Service."""
+        """Log the validation decision to both sinks (ADR-40)."""
+        model_id = self._last_model_used or "unknown"
+
         decision_payload = {
             "decision_id": str(uuid.uuid4()),
             "agent_name": "validator-agent",
             "decision_type": "content_validation",
             "phase": "Phase 3: Material Validation",
-            "model_id": "stub",
+            "model_id": model_id,
             "confidence_score": None,
             "prompt_version": self._content_safety.prompt_version,
             "reasoning_steps": reasoning_steps,
@@ -278,7 +329,16 @@ class ValidatorService:
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
 
+        # Sink 1: PostgreSQL (via Pub/Sub → Decision Audit Service)
         await self._decision_audit.log_decision(
+            workflow_id=request.workflow_id,
+            agent_name="validator-agent",
+            decision_type="content_validation",
+            payload=decision_payload,
+        )
+
+        # Sink 2: Langfuse (via TracingPort → OTel SDK)
+        await self._tracing.trace_decision(
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
             decision_type="content_validation",
