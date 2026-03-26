@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 
-from validator_agent.ports.model_broker_port import ModelBrokerPort
+from validator_agent.ports.model_broker_port import ModelBrokerPort, ModelBrokerResponse
 
 _HARMFUL_KEYWORDS = ("extremist", "manifesto", "bomb", "weapon")
 _PII_PATTERNS = (r"SSN:\s*\d", r"social security", r"[\w.+-]+@[\w-]+\.[\w.]+")
@@ -57,41 +57,60 @@ class StubModelBrokerAdapter(ModelBrokerPort):
     content_safety.yaml prompt format.
     """
 
-    async def generate(self, *, prompt: str, model_tier: str) -> str:
+    async def generate(self, *, prompt: str, model_tier: str) -> ModelBrokerResponse:
         """Return a canned JSON safety response based on document content keywords."""
         document_content = _extract_document_content(prompt)
         content_lower = document_content.lower()
 
+        content: str
+
         # Priority 1: Harmful content
         for keyword in _HARMFUL_KEYWORDS:
             if keyword.lower() in content_lower:
-                return json.dumps({
+                content = json.dumps({
                     "is_safe": False,
                     "reason_code": "HARMFUL_CONTENT",
                     "message": f"Harmful content detected: contains '{keyword}' reference",
                 })
+                return self._wrap(content, model_tier)
 
         # Priority 2: PII
         for pattern in _PII_PATTERNS:
             if re.search(pattern, document_content, re.IGNORECASE):
-                return json.dumps({
+                content = json.dumps({
                     "is_safe": False,
                     "reason_code": "PII_DETECTED",
                     "message": "Personally identifiable information detected in document",
                 })
+                return self._wrap(content, model_tier)
 
         # Priority 3: Copyright
         for keyword in _COPYRIGHT_KEYWORDS:
             if keyword.lower() in content_lower:
-                return json.dumps({
+                content = json.dumps({
                     "is_safe": False,
                     "reason_code": "COPYRIGHT_VIOLATION",
                     "message": f"Copyright violation detected: contains '{keyword}'",
                 })
+                return self._wrap(content, model_tier)
 
         # Default: safe
-        return json.dumps({
+        content = json.dumps({
             "is_safe": True,
             "reason_code": "VALIDATION_PASSED",
             "message": "No safety concerns detected in document content",
         })
+        return self._wrap(content, model_tier)
+
+    @staticmethod
+    def _wrap(content: str, model_tier: str) -> ModelBrokerResponse:
+        """Wrap content in a ModelBrokerResponse with stub telemetry."""
+        return ModelBrokerResponse(
+            content=content,
+            model_used="gemini-2.0-flash-stub",
+            model_tier=model_tier,
+            tokens_input=len(content.split()) * 2,
+            tokens_output=len(content.split()),
+            cost_usd=0.001,
+            latency_ms=50.0,
+        )
