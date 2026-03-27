@@ -311,9 +311,9 @@ class TestDecisionAuditLogging:
 
         # Payload must contain terminal_signal
         payload = entry.payload
-        assert "terminal_signal" in payload
-        assert payload["terminal_signal"]["status"] == "PROCEED"
-        assert payload["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
+        assert "output_summary" in payload
+        assert payload["output_summary"]["terminal_signal"]["status"] == "PROCEED"
+        assert payload["output_summary"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
 
         # Payload must contain reasoning_steps (non-empty list of dicts with step numbers)
         assert "reasoning_steps" in payload
@@ -325,10 +325,9 @@ class TestDecisionAuditLogging:
         assert "prompt_version" in payload
         assert payload["prompt_version"].startswith("validator/content_safety@v")
 
-        # Payload must include decision_id, agent_name, phase
-        assert "decision_id" in payload
+        # Payload must include agent_name and phase (phase lives in input_summary)
         assert payload["agent_name"] == "validator-agent"
-        assert payload["phase"] == "Phase 3: Material Validation"
+        assert payload["input_summary"]["phase"] == "Phase 3: Material Validation"
 
     async def test_terminate_audit_records_terminate_signal(self) -> None:
         """TERMINATE outcomes must also be logged with correct terminal_signal."""
@@ -339,8 +338,8 @@ class TestDecisionAuditLogging:
 
         assert len(da_ref.entries) == 1
         payload = da_ref.entries[0].payload
-        assert payload["terminal_signal"]["status"] == "TERMINATE"
-        assert payload["terminal_signal"]["reason_code"] == "BLURRY_UNREADABLE"
+        assert payload["output_summary"]["terminal_signal"]["status"] == "TERMINATE"
+        assert payload["output_summary"]["terminal_signal"]["reason_code"] == "BLURRY_UNREADABLE"
 
 
 # ===========================================================================
@@ -619,7 +618,7 @@ class TestMultiFilePartialTerminate:
         payload = da_ref.entries[0].payload
 
         # Overall terminal_signal in audit must be TERMINATE
-        assert payload["terminal_signal"]["status"] == "TERMINATE"
+        assert payload["output_summary"]["terminal_signal"]["status"] == "TERMINATE"
 
         # Reasoning steps must span all 3 files
         steps = payload["reasoning_steps"]

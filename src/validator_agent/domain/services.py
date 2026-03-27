@@ -40,6 +40,9 @@ from validator_agent.ports.ocr_port import OcrPort
 from validator_agent.ports.storage_port import StoragePort
 from validator_agent.ports.tracing_port import TracingPort
 
+# Shared domain model — canonical format for both UI and Langfuse
+from af_shared.models.domain import DecisionLogEntry
+
 logger = structlog.get_logger(__name__)
 
 # Minimum viable text length from OCR to consider extraction successful
@@ -324,39 +327,28 @@ class ValidatorService:
         file_results: list[FileResult],
         reasoning_steps: list[dict],
     ) -> None:
-        """Log the validation decision to both sinks (ADR-40).
+        """Log the validation decision to both sinks using ONE canonical format.
 
-        Populates all telemetry fields for Langfuse observability:
-        - confidence_score: min of all ML/LLM confidence values (weakest link)
-        - grounding_sources: file names that were validated
-        - input_summary: material metadata
-        - output_summary: terminal_signal + per-file results
+        Uses DecisionLogEntry (shared model) as the single format for:
+        - Sink 1: PostgreSQL (via DecisionAuditPort → Pub/Sub)
+        - Sink 2: Langfuse (via TracingPort → OTel SDK)
+        - UI: GET /decisions reads from the same agent_decision_log table
+
+        All three consumers see identical data. No format translation needed.
         """
         model_id = self._last_model_used or "unknown"
 
-        # Confidence = weakest link in the validation chain
-        confidence = (
-            min(self._confidence_scores) if self._confidence_scores else None
-        )
-
-        # Grounding = files that were validated
-        grounding = [f.file_name for f in file_results]
-
-        decision_payload = {
-            "decision_id": str(uuid.uuid4()),
-            "agent_name": "validator-agent",
-            "decision_type": "content_validation",
-            "phase": "Phase 3: Material Validation",
-            "model_id": model_id,
-            "confidence_score": confidence,
-            "prompt_version": self._content_safety.prompt_version,
-            "reasoning_steps": reasoning_steps,
-            "input_summary": {
-                "workflow_id": request.workflow_id,
+        # Build the canonical DecisionLogEntry — ONE object, TWO sinks
+        entry = DecisionLogEntry(
+            workflow_id=request.workflow_id,
+            agent_name="validator-agent",
+            decision_type="content_validation",
+            input_summary={
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],
+                "phase": "Phase 3: Material Validation",
             },
-            "output_summary": {
+            output_summary={
                 "terminal_signal": overall_signal.model_dump(),
                 "files_validated": len(file_results),
                 "files_passed": sum(
@@ -364,23 +356,27 @@ class ValidatorService:
                     if f.terminal_signal.status == TerminalSignalStatus.PROCEED
                 ),
             },
-            "terminal_signal": overall_signal.model_dump(),
-            "grounding_sources": grounding,
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-        }
+            reasoning_steps=reasoning_steps,
+            confidence_score=(
+                min(self._confidence_scores) if self._confidence_scores else None
+            ),
+            prompt_version=self._content_safety.prompt_version,
+            model_id=model_id,
+            grounding_sources=[f.file_name for f in file_results],
+        )
 
         # Sink 1: PostgreSQL (via Pub/Sub → Decision Audit Service)
         await self._decision_audit.log_decision(
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
             decision_type="content_validation",
-            payload=decision_payload,
+            payload=entry.model_dump(),
         )
 
-        # Sink 2: Langfuse (via TracingPort → OTel SDK)
+        # Sink 2: Langfuse (via TracingPort → OTel SDK) — SAME entry
         await self._tracing.trace_decision(
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
             decision_type="content_validation",
-            payload=decision_payload,
+            payload=entry.model_dump(),
         )
