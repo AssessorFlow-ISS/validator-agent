@@ -343,12 +343,12 @@ class ValidatorService:
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
             decision_type="content_validation",
-            input_summary={
+            input={
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],
                 "phase": "Phase 3: Material Validation",
             },
-            output_summary={
+            output={
                 "terminal_signal": overall_signal.model_dump(),
                 "files_validated": len(file_results),
                 "files_passed": sum(
