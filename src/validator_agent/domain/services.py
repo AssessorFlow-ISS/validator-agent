@@ -80,6 +80,7 @@ class ValidatorService:
         reasoning_steps_all: list[dict] = []
         step_counter = 0
         self._last_model_used: str | None = None
+        self._confidence_scores: list[float] = []  # track per-step confidence
 
         for file_info in request.files:
             signal, steps, step_counter = await self._validate_single_file(
@@ -141,12 +142,18 @@ class ValidatorService:
                 f"confidence={mrc_result.confidence}"
             ),
         })
+        self._confidence_scores.append(mrc_result.confidence)
         await self._tracing.trace_tool_call(
             workflow_id=workflow_id,
             agent_name="validator-agent",
             tool_name="mrc-predict",
-            input_params={"file_path": file_info.storage_path},
-            output_summary={"readiness": mrc_result.readiness, "confidence": mrc_result.confidence},
+            input_params={"file_path": file_info.storage_path, "file_name": file_info.file_name},
+            output_summary={
+                "readiness": mrc_result.readiness,
+                "confidence": mrc_result.confidence,
+                "ml_model": "vertex-ai-mrc",
+                "prediction_type": "binary_classification",
+            },
             latency_ms=mrc_latency,
         )
 
@@ -180,12 +187,19 @@ class ValidatorService:
                 f"(source_type: {ocr_result.source_type})"
             ),
         })
+        ocr_confidence = getattr(ocr_result, 'confidence', 1.0)
+        self._confidence_scores.append(ocr_confidence)
         await self._tracing.trace_tool_call(
             workflow_id=workflow_id,
             agent_name="validator-agent",
             tool_name="ocr-extract-text",
-            input_params={"file_path": file_info.storage_path},
-            output_summary={"chars_extracted": extracted_length, "source_type": ocr_result.source_type},
+            input_params={"file_path": file_info.storage_path, "file_name": file_info.file_name},
+            output_summary={
+                "chars_extracted": extracted_length,
+                "source_type": ocr_result.source_type,
+                "ocr_confidence": ocr_confidence,
+                "ml_model": "vertex-ai-vision",
+            },
             latency_ms=ocr_latency,
         )
 
@@ -310,8 +324,23 @@ class ValidatorService:
         file_results: list[FileResult],
         reasoning_steps: list[dict],
     ) -> None:
-        """Log the validation decision to both sinks (ADR-40)."""
+        """Log the validation decision to both sinks (ADR-40).
+
+        Populates all telemetry fields for Langfuse observability:
+        - confidence_score: min of all ML/LLM confidence values (weakest link)
+        - grounding_sources: file names that were validated
+        - input_summary: material metadata
+        - output_summary: terminal_signal + per-file results
+        """
         model_id = self._last_model_used or "unknown"
+
+        # Confidence = weakest link in the validation chain
+        confidence = (
+            min(self._confidence_scores) if self._confidence_scores else None
+        )
+
+        # Grounding = files that were validated
+        grounding = [f.file_name for f in file_results]
 
         decision_payload = {
             "decision_id": str(uuid.uuid4()),
@@ -319,13 +348,24 @@ class ValidatorService:
             "decision_type": "content_validation",
             "phase": "Phase 3: Material Validation",
             "model_id": model_id,
-            "confidence_score": None,
+            "confidence_score": confidence,
             "prompt_version": self._content_safety.prompt_version,
             "reasoning_steps": reasoning_steps,
+            "input_summary": {
+                "workflow_id": request.workflow_id,
+                "file_count": len(request.files),
+                "files": [f.file_name for f in request.files],
+            },
+            "output_summary": {
+                "terminal_signal": overall_signal.model_dump(),
+                "files_validated": len(file_results),
+                "files_passed": sum(
+                    1 for f in file_results
+                    if f.terminal_signal.status == TerminalSignalStatus.PROCEED
+                ),
+            },
             "terminal_signal": overall_signal.model_dump(),
-            "grounding_sources": [],
-            "quality_iteration_count": None,
-            "convergence_stall": None,
+            "grounding_sources": grounding,
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
 
