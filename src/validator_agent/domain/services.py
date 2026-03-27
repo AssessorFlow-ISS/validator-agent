@@ -347,6 +347,7 @@ class ValidatorService:
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],
                 "phase": "Phase 3: Material Validation",
+                "tools_used": ["mrc-predict", "ocr-extract-text", "content-safety-llm"],
             },
             output={
                 "terminal_signal": overall_signal.model_dump(),
