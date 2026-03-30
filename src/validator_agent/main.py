@@ -25,7 +25,7 @@ from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
 from validator_agent.adapters.storage_stub import StubStorageAdapter
-from validator_agent.adapters.tracing_stub import StubTracingAdapter
+from af_shared.adapters.factory import get_tracing
 from validator_agent.api.routes import router
 from validator_agent.api.schemas import FileInfo, ValidationRequest
 from validator_agent.config import ValidatorConfig
@@ -85,7 +85,7 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any]:
     storage = StubStorageAdapter()
 
     # -- Tracing adapter (Langfuse — Walfa implements real adapter) ---------
-    tracing = StubTracingAdapter()
+    tracing = get_tracing()
 
     content_safety = ContentSafetyReasoner(model_broker=model_broker)
 
