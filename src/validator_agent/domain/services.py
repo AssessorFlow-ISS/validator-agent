@@ -38,10 +38,10 @@ from validator_agent.ports.knowledge_service_port import KnowledgeServicePort
 from validator_agent.ports.mrc_port import MrcPort
 from validator_agent.ports.ocr_port import OcrPort
 from validator_agent.ports.storage_port import StoragePort
-from validator_agent.ports.tracing_port import TracingPort
 
-# Shared domain model — canonical format for both UI and Langfuse
-from af_shared.models.domain import DecisionLogEntry
+# Shared ports and models from af-shared (B3 unification)
+from af_shared.models.domain import DecisionLogEntry, ModelResponse
+from af_shared.ports.tracing import TracingPort
 
 logger = structlog.get_logger(__name__)
 
@@ -242,14 +242,12 @@ class ValidatorService:
 
         # Trace LLM call to Langfuse (Sink 2) if metrics available
         if safety_result.llm_metrics:
-            from validator_agent.ports.model_broker_port import ModelBrokerResponse
-
             await self._tracing.trace_llm_call(
                 workflow_id=workflow_id,
                 agent_name="validator-agent",
                 task_key="content_safety",
                 prompt_version=self._content_safety.prompt_version,
-                model_response=ModelBrokerResponse(
+                model_response=ModelResponse(
                     content="",
                     model_used=safety_result.llm_metrics.model_used,
                     model_tier=safety_result.llm_metrics.model_tier,
@@ -343,13 +341,13 @@ class ValidatorService:
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
             decision_type="content_validation",
-            input={
+            input_summary={
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],
                 "phase": "Phase 3: Material Validation",
                 "tools_used": ["mrc-predict", "ocr-extract-text", "content-safety-llm"],
             },
-            output={
+            output_summary={
                 "terminal_signal": overall_signal.model_dump(),
                 "files_validated": len(file_results),
                 "files_passed": sum(
@@ -375,9 +373,4 @@ class ValidatorService:
         )
 
         # Sink 2: Langfuse (via TracingPort → OTel SDK) — SAME entry
-        await self._tracing.trace_decision(
-            workflow_id=request.workflow_id,
-            agent_name="validator-agent",
-            decision_type="content_validation",
-            payload=entry.model_dump(),
-        )
+        await self._tracing.trace_decision(entry)

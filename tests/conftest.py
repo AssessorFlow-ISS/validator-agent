@@ -13,7 +13,7 @@ from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapte
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
 from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
-from validator_agent.adapters.tracing_stub import StubTracingAdapter
+from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
 from validator_agent.adapters.storage_stub import StubStorageAdapter

@@ -66,7 +66,7 @@ def _build_service(
     ep = event_publisher or StubEventPublisherAdapter()
     st = storage or StubStorageAdapter()
 
-    from validator_agent.adapters.tracing_stub import StubTracingAdapter
+    from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
 
     content_safety = ContentSafetyReasoner(model_broker=model_broker)
     tr = StubTracingAdapter()
@@ -297,7 +297,7 @@ class TestDecisionAuditLogging:
         await service.validate(_make_request())
 
         assert len(da_ref.entries) == 1
-        assert da_ref.entries[0].payload["output"]["terminal_signal"]["status"] == "TERMINATE"
+        assert da_ref.entries[0].payload["output_summary"]["terminal_signal"]["status"] == "TERMINATE"
 
     async def test_audit_contains_reasoning_steps(self) -> None:
         da = StubDecisionAuditAdapter()
@@ -323,9 +323,9 @@ class TestDecisionAuditLogging:
         await service.validate(_make_request())
 
         payload = da_ref.entries[0].payload
-        assert "output" in payload
-        assert payload["output"]["terminal_signal"]["status"] == "PROCEED"
-        assert payload["output"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
+        assert "output_summary" in payload
+        assert payload["output_summary"]["terminal_signal"]["status"] == "PROCEED"
+        assert payload["output_summary"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
 
 
 class TestStorageDownload:
