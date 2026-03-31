@@ -17,6 +17,7 @@ class ProcessMaterialCall:
     workflow_id: str
     content_text: str
     source_type: str
+    assessor_id: str | None = None
 
 
 class StubKnowledgeServiceAdapter(KnowledgeServicePort):
@@ -31,10 +32,12 @@ class StubKnowledgeServiceAdapter(KnowledgeServicePort):
         workflow_id: str,
         content_text: str,
         source_type: str,
+        assessor_id: str | None = None,
     ) -> None:
         """Record the call without performing any real processing."""
         self.calls.append(ProcessMaterialCall(
             workflow_id=workflow_id,
             content_text=content_text,
             source_type=source_type,
+            assessor_id=assessor_id,
         ))

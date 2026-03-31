@@ -19,6 +19,7 @@ class KnowledgeServicePort(ABC):
         workflow_id: str,
         content_text: str,
         source_type: str,
+        assessor_id: str | None = None,
     ) -> None:
         """Send extracted text to the Knowledge Service for chunking/embedding.
 
@@ -26,4 +27,6 @@ class KnowledgeServicePort(ABC):
             workflow_id: The workflow identifier.
             content_text: Pre-extracted text content from OCR.
             source_type: How the text was extracted (e.g. "ocr_extracted").
+            assessor_id: CR-RAG-001 — assessor identity stored with chunks
+                for cumulative cross-assessment knowledge and isolation.
         """
