@@ -34,7 +34,14 @@ class ModelBrokerHttpAdapter(ModelBrokerPort):
             timeout=timeout,
         )
 
-    async def generate(self, *, prompt: str, model_tier: str) -> str:
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model_tier: str,
+        response_format: str | None = None,
+        response_schema: dict | None = None,
+    ) -> str:
         """Call Model Broker and return the LLM response content.
 
         Maps the Validator's (prompt, model_tier) interface to the
@@ -56,6 +63,10 @@ class ModelBrokerHttpAdapter(ModelBrokerPort):
             "agent_id": "validator-agent",
             "prompt_version": "validator/content_safety@v1",
         }
+        if response_format:
+            request_body["response_format"] = response_format
+        if response_schema:
+            request_body["response_schema"] = response_schema
 
         logger.info(
             "model_broker_request",
