@@ -57,7 +57,14 @@ class StubModelBrokerAdapter(ModelBrokerPort):
     content_safety.yaml prompt format.
     """
 
-    async def generate(self, *, prompt: str, model_tier: str) -> ModelBrokerResponse:
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model_tier: str,
+        response_format: str | None = None,
+        response_schema: dict | None = None,
+    ) -> ModelBrokerResponse:
         """Return a canned JSON safety response based on document content keywords."""
         document_content = _extract_document_content(prompt)
         content_lower = document_content.lower()

@@ -35,12 +35,21 @@ class ModelBrokerPort(ABC):
     """Port for LLM inference via the Model Broker (L-09)."""
 
     @abstractmethod
-    async def generate(self, *, prompt: str, model_tier: str) -> ModelBrokerResponse:
+    async def generate(
+        self,
+        *,
+        prompt: str,
+        model_tier: str,
+        response_format: str | None = None,
+        response_schema: dict | None = None,
+    ) -> ModelBrokerResponse:
         """Generate a completion from the LLM.
 
         Args:
             prompt: The fully rendered prompt string.
             model_tier: Tier hint for model routing (e.g. "HIGH", "CHEAP").
+            response_format: Set to "json" to enforce structured JSON output.
+            response_schema: JSON Schema for the expected response structure.
 
         Returns:
             ModelBrokerResponse with content + full telemetry.
