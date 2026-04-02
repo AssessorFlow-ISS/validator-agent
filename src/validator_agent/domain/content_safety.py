@@ -98,9 +98,13 @@ class ContentSafetyReasoner:
         prompt = re.sub(r"\{file_name\}", file_name, prompt)
         model_tier = self._frontmatter.get("model_tier", "HIGH")
 
+        from validator_agent.domain.schemas_json import CONTENT_SAFETY_SCHEMA
+
         model_response = await self._model_broker.generate(
             prompt=prompt,
             model_tier=model_tier,
+            response_format="json",
+            response_schema=CONTENT_SAFETY_SCHEMA,
         )
 
         result = self._parse_response(model_response.content, file_name)
