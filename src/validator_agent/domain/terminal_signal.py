@@ -12,9 +12,10 @@ from pydantic import BaseModel, Field
 
 
 class TerminalSignalStatus(StrEnum):
-    """Binary outcome of validation: proceed with workflow or terminate."""
+    """Outcome of validation: proceed, proceed with warnings, or terminate."""
 
     PROCEED = "PROCEED"
+    PROCEED_WITH_WARNINGS = "PROCEED_WITH_WARNINGS"
     TERMINATE = "TERMINATE"
 
 
@@ -22,13 +23,26 @@ class ReasonCode(StrEnum):
     """Structured reason codes for validation outcomes.
 
     Each code maps to a specific validation check failure (or overall pass).
+    Hard gates produce TERMINATE; soft gates produce PROCEED_WITH_WARNINGS.
     """
 
+    # Success
     VALIDATION_PASSED = "VALIDATION_PASSED"
+
+    # Component 1: MRC (hard gate)
     BLURRY_UNREADABLE = "BLURRY_UNREADABLE"
+
+    # Component 2: OCR (hard gate)
     OCR_FAILED = "OCR_FAILED"
-    CONTENT_POLICY_VIOLATION = "CONTENT_POLICY_VIOLATION"
+    HARMFUL_IMAGE = "HARMFUL_IMAGE"
+
+    # Component 3: Content Safety — hard gates (TERMINATE)
     HARMFUL_CONTENT = "HARMFUL_CONTENT"
+    RELIGIOUS_POLITICAL_VIOLATION = "RELIGIOUS_POLITICAL_VIOLATION"
+    CONTENT_SAFETY_UNAVAILABLE = "CONTENT_SAFETY_UNAVAILABLE"
+
+    # Component 3: Content Safety — soft gates (PROCEED_WITH_WARNINGS)
+    CONTENT_POLICY_VIOLATION = "CONTENT_POLICY_VIOLATION"
     PII_DETECTED = "PII_DETECTED"
     COPYRIGHT_VIOLATION = "COPYRIGHT_VIOLATION"
 

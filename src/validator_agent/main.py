@@ -87,17 +87,21 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any]:
     # -- Tracing adapter (Langfuse — Walfa implements real adapter) ---------
     tracing = get_tracing()
 
-    content_safety = ContentSafetyReasoner(model_broker=model_broker)
+    # ValidatorService wraps Thet's 3-component pipeline.
+    # In stub mode, use a keyword-based stub pipeline (no external calls).
+    # In production, Thet's real pipeline runs MRC + Document AI + Content Safety.
+    pipeline_fn = None
+    if config.llm_provider == "stub":
+        from validator_agent.adapters.pipeline_stub import stub_pipeline_fn
+        pipeline_fn = stub_pipeline_fn
 
     service = ValidatorService(
-        mrc=mrc,
-        ocr=ocr,
-        content_safety=content_safety,
         knowledge_service=knowledge_service,
         decision_audit=decision_audit,
         event_publisher=event_publisher,
         storage=storage,
         tracing=tracing,
+        pipeline_fn=pipeline_fn,
     )
 
     return service, event_publisher

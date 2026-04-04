@@ -11,15 +11,16 @@ from pathlib import Path
 
 import pytest
 
+from collections.abc import Callable
+
 from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapter
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
-from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
+from validator_agent.adapters.pipeline_stub import make_stub_pipeline, stub_pipeline_fn
 from validator_agent.adapters.storage_stub import StubStorageAdapter
 from validator_agent.api.schemas import FileInfo, ValidationRequest, ValidationResponse
-from validator_agent.domain.content_safety import ContentSafetyReasoner
 from validator_agent.domain.services import ValidatorService
 from validator_agent.domain.terminal_signal import (
     ReasonCode,
@@ -59,35 +60,41 @@ def _make_request(
 
 def _build_service(
     *,
-    mrc: StubMrcAdapter | None = None,
-    ocr: StubOcrAdapter | None = None,
-    model_broker: StubModelBrokerAdapter | None = None,
     decision_audit: StubDecisionAuditAdapter | None = None,
+    storage: StubStorageAdapter | None = None,
+    pipeline_fn: Callable | None = None,
+    # Legacy parameters mapped to make_stub_pipeline
+    mrc: object | None = None,
+    ocr: object | None = None,
 ) -> tuple[ValidatorService, StubDecisionAuditAdapter]:
-    """Construct a ValidatorService wired with stub adapters.
-
-    Returns the service and the decision-audit stub so callers can inspect
-    logged entries.
-    """
-    mrc = mrc or StubMrcAdapter()
-    ocr = ocr or StubOcrAdapter(
-        default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(encoding="utf-8"),
-    )
-    model_broker = model_broker or StubModelBrokerAdapter()
+    """Construct a ValidatorService wired with stub adapters."""
     da = decision_audit or StubDecisionAuditAdapter()
+    st = storage or StubStorageAdapter()
+
+    if pipeline_fn is None:
+        mrc_readiness = True
+        mrc_confidence = 0.95
+        ocr_text = None
+        if mrc is not None:
+            mrc_readiness = getattr(mrc, '_default_readiness', True)
+            mrc_confidence = getattr(mrc, '_default_confidence', 0.95)
+        if ocr is not None:
+            ocr_text = getattr(ocr, '_default_text', None)
+        pipeline_fn = make_stub_pipeline(
+            mrc_readiness=mrc_readiness,
+            mrc_confidence=mrc_confidence,
+            ocr_text=ocr_text,
+        )
 
     from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
 
-    content_safety = ContentSafetyReasoner(model_broker=model_broker)
     service = ValidatorService(
-        mrc=mrc,
-        ocr=ocr,
-        content_safety=content_safety,
         knowledge_service=StubKnowledgeServiceAdapter(),
         decision_audit=da,
         event_publisher=StubEventPublisherAdapter(),
-        storage=StubStorageAdapter(),
+        storage=st,
         tracing=StubTracingAdapter(),
+        pipeline_fn=pipeline_fn,
     )
     return service, da
 
@@ -151,8 +158,8 @@ class TestTerminateHarmfulContent:
 
     async def test_harmful_content_returns_terminate(self) -> None:
         harmful_text = FIXTURES_DIR.joinpath("harmful_content.txt").read_text(encoding="utf-8")
-        ocr = StubOcrAdapter(default_text=harmful_text)
-        service, _ = _build_service(ocr=ocr)
+        storage = StubStorageAdapter(default_bytes=harmful_text.encode())
+        service, _ = _build_service(storage=storage)
         response = await service.validate(_make_request())
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -164,8 +171,8 @@ class TestTerminatePiiDetected:
 
     async def test_pii_detected_returns_terminate(self) -> None:
         pii_text = FIXTURES_DIR.joinpath("pii_content.txt").read_text(encoding="utf-8")
-        ocr = StubOcrAdapter(default_text=pii_text)
-        service, _ = _build_service(ocr=ocr)
+        storage = StubStorageAdapter(default_bytes=pii_text.encode())
+        service, _ = _build_service(storage=storage)
         response = await service.validate(_make_request())
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -182,8 +189,8 @@ class TestTerminateCopyrightViolation:
             "All content is subject to the publisher's copyright terms. "
             "Additional filler text to exceed the minimum OCR length threshold."
         )
-        ocr = StubOcrAdapter(default_text=copyright_text)
-        service, _ = _build_service(ocr=ocr)
+        storage = StubStorageAdapter(default_bytes=copyright_text.encode())
+        service, _ = _build_service(storage=storage)
         response = await service.validate(_make_request())
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -194,8 +201,8 @@ class TestTerminateOcrFailed:
     """SC-INT-08: OCR extraction failure triggers TERMINATE."""
 
     async def test_ocr_failed_returns_terminate(self) -> None:
-        ocr = StubOcrAdapter(default_text="")
-        service, _ = _build_service(ocr=ocr)
+        pipeline_fn = make_stub_pipeline(ocr_text="")
+        service, _ = _build_service(pipeline_fn=pipeline_fn)
         response = await service.validate(_make_request())
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -259,10 +266,10 @@ class TestTerminalSignalStructure:
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
 
     async def test_terminal_signal_status_not_retry(self) -> None:
-        """RETRY was removed from the Terminal Signal contract — only PROCEED or TERMINATE."""
+        """RETRY was removed from the Terminal Signal contract — only PROCEED, PROCEED_WITH_WARNINGS, or TERMINATE."""
         valid_statuses = {member.value for member in TerminalSignalStatus}
         assert "RETRY" not in valid_statuses
-        assert valid_statuses == {"PROCEED", "TERMINATE"}
+        assert valid_statuses == {"PROCEED", "PROCEED_WITH_WARNINGS", "TERMINATE"}
 
     async def test_terminate_message_is_human_readable(self) -> None:
         """TERMINATE message must be a non-empty, human-readable string."""
@@ -315,15 +322,16 @@ class TestDecisionAuditLogging:
         assert payload["output_summary"]["terminal_signal"]["status"] == "PROCEED"
         assert payload["output_summary"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
 
-        # Payload must contain reasoning_steps (non-empty list of dicts with step numbers)
+        # Payload must contain reasoning_steps (non-empty list of dicts with per-file data)
         assert "reasoning_steps" in payload
         assert isinstance(payload["reasoning_steps"], list)
         assert len(payload["reasoning_steps"]) > 0
-        assert payload["reasoning_steps"][0]["step"] == 1
+        assert "file" in payload["reasoning_steps"][0]
+        assert "status" in payload["reasoning_steps"][0]
 
         # Payload must include prompt_version per ADR-39
         assert "prompt_version" in payload
-        assert payload["prompt_version"].startswith("validator/content_safety@v")
+        assert payload["prompt_version"].startswith("validator/thet-pipeline@v")
 
         # Payload must include agent_name and phase (phase lives in input_summary)
         assert payload["agent_name"] == "validator-agent"
@@ -386,22 +394,21 @@ class TestMultiFilePartialTerminate:
         """3 files — file 2 has harmful content — overall must be TERMINATE.
 
         Files 1 and 3 are clean; file 2 contains harmful keywords that
-        trigger the StubModelBrokerAdapter's HARMFUL_CONTENT detection.
+        trigger the stub pipeline's HARMFUL_CONTENT detection.
         """
         request, files = _make_multi_file_request()
         harmful_text = (
             "This extremist manifesto contains dangerous ideological content "
             "that promotes violence and describes weapon construction methods."
         )
-        ocr = StubOcrAdapter(
-            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
-                encoding="utf-8",
-            ),
+        clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
+        storage = StubStorageAdapter(
+            default_bytes=clean_bytes,
             overrides={
-                files[1].storage_path: harmful_text,
+                files[1].storage_path: harmful_text.encode(),
             },
         )
-        service, _ = _build_service(ocr=ocr)
+        service, _ = _build_service(storage=storage)
         response = await service.validate(request)
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -426,15 +433,14 @@ class TestMultiFilePartialTerminate:
             "This document describes bomb-making instructions and weapon "
             "acquisition through illegal channels. Extremely dangerous content."
         )
-        ocr = StubOcrAdapter(
-            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
-                encoding="utf-8",
-            ),
+        clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
+        storage = StubStorageAdapter(
+            default_bytes=clean_bytes,
             overrides={
-                files[0].storage_path: harmful_text,
+                files[0].storage_path: harmful_text.encode(),
             },
         )
-        service, _ = _build_service(ocr=ocr)
+        service, _ = _build_service(storage=storage)
         response = await service.validate(request)
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -455,15 +461,14 @@ class TestMultiFilePartialTerminate:
             "This extremist propaganda manifesto advocates for overthrow of "
             "democratic institutions and describes recruitment of vulnerable individuals."
         )
-        ocr = StubOcrAdapter(
-            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
-                encoding="utf-8",
-            ),
+        clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
+        storage = StubStorageAdapter(
+            default_bytes=clean_bytes,
             overrides={
-                files[2].storage_path: harmful_text,
+                files[2].storage_path: harmful_text.encode(),
             },
         )
-        service, _ = _build_service(ocr=ocr)
+        service, _ = _build_service(storage=storage)
         response = await service.validate(request)
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -504,10 +509,8 @@ class TestMultiFilePartialTerminate:
             "This extremist manifesto contains bomb-making instructions "
             "and weapon acquisition details that violate content policies."
         )
-        ocr = StubOcrAdapter(
-            default_text=harmful_text,
-        )
-        service, _ = _build_service(ocr=ocr)
+        storage = StubStorageAdapter(default_bytes=harmful_text.encode())
+        service, _ = _build_service(storage=storage)
         response = await service.validate(request)
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -527,23 +530,28 @@ class TestMultiFilePartialTerminate:
         The overall signal should carry BLURRY_UNREADABLE, not a generic code.
         """
         request, files = _make_multi_file_request()
-        mrc = StubMrcAdapter(
-            overrides={
-                files[1].storage_path: {
-                    "readiness": False,
-                    "confidence": 0.15,
-                },
-            },
-        )
-        service, _ = _build_service(mrc=mrc)
+        blurry_path = files[1].storage_path
+
+        def _per_file_pipeline(file_bytes: bytes, file_name: str) -> "ValidatorResult":
+            """MRC fails for file 2 only."""
+            from validator_agent.pipeline.models import ValidatorResult
+            if file_name == "document_2.pdf":
+                return make_stub_pipeline(
+                    mrc_readiness=False, mrc_confidence=0.15,
+                )(file_bytes, file_name)
+            return stub_pipeline_fn(file_bytes, file_name)
+
+        service, _ = _build_service(pipeline_fn=_per_file_pipeline)
         response = await service.validate(request)
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
         assert response.terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
-        assert "document_2.pdf" in response.terminal_signal.message
+        # Message comes from Thet's pipeline; verify it is non-empty and human-readable
+        assert len(response.terminal_signal.message.strip()) > 0
 
         # The specific file that failed
         assert response.file_results[1].terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
+        assert response.file_results[1].file_name == "document_2.pdf"
 
     async def test_first_terminate_wins_when_multiple_files_fail(self) -> None:
         """When multiple files fail, the overall signal uses the FIRST TERMINATE.
@@ -560,23 +568,25 @@ class TestMultiFilePartialTerminate:
             "This extremist manifesto contains bomb-making instructions "
             "and weapon details that are dangerous."
         )
-        mrc = StubMrcAdapter(
+
+        def _per_file_pipeline(file_bytes: bytes, file_name: str) -> "ValidatorResult":
+            """File 1 blurry, file 2 harmful, file 3 clean."""
+            from validator_agent.pipeline.models import ValidatorResult
+            if file_name == "document_1.pdf":
+                return make_stub_pipeline(
+                    mrc_readiness=False, mrc_confidence=0.12,
+                )(file_bytes, file_name)
+            return stub_pipeline_fn(file_bytes, file_name)
+
+        # File 2 gets harmful content via storage bytes
+        clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
+        storage = StubStorageAdapter(
+            default_bytes=clean_bytes,
             overrides={
-                files[0].storage_path: {
-                    "readiness": False,
-                    "confidence": 0.12,
-                },
+                files[1].storage_path: harmful_text.encode(),
             },
         )
-        ocr = StubOcrAdapter(
-            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
-                encoding="utf-8",
-            ),
-            overrides={
-                files[1].storage_path: harmful_text,
-            },
-        )
-        service, _ = _build_service(mrc=mrc, ocr=ocr)
+        service, _ = _build_service(storage=storage, pipeline_fn=_per_file_pipeline)
         response = await service.validate(request)
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -600,16 +610,15 @@ class TestMultiFilePartialTerminate:
             "This extremist manifesto contains dangerous weapon content "
             "that should trigger content safety detection."
         )
-        ocr = StubOcrAdapter(
-            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
-                encoding="utf-8",
-            ),
+        clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
+        storage = StubStorageAdapter(
+            default_bytes=clean_bytes,
             overrides={
-                files[1].storage_path: harmful_text,
+                files[1].storage_path: harmful_text.encode(),
             },
         )
         da = StubDecisionAuditAdapter()
-        service, da_ref = _build_service(ocr=ocr, decision_audit=da)
+        service, da_ref = _build_service(storage=storage, decision_audit=da)
         response = await service.validate(request)
 
         # Exactly one audit entry per validation invocation
@@ -622,17 +631,13 @@ class TestMultiFilePartialTerminate:
 
         # Reasoning steps must span all 3 files
         steps = payload["reasoning_steps"]
-        assert len(steps) > 0
+        assert len(steps) == 3
 
-        # Step numbers must be sequential across all files (no gaps, no resets)
-        step_numbers = [s["step"] for s in steps]
-        assert step_numbers == list(range(1, len(steps) + 1))
-
-        # Must contain references to all 3 files
-        all_actions = " ".join(s["action"] for s in steps)
-        assert "document_1.pdf" in all_actions
-        assert "document_2.pdf" in all_actions
-        assert "document_3.pdf" in all_actions
+        # Each step has per-file data (file, status, reason_code)
+        all_files = [s["file"] for s in steps]
+        assert "document_1.pdf" in all_files
+        assert "document_2.pdf" in all_files
+        assert "document_3.pdf" in all_files
 
     async def test_multi_file_response_contains_all_file_results(self) -> None:
         """Response file_results list must contain an entry for every input file.
@@ -645,15 +650,14 @@ class TestMultiFilePartialTerminate:
             "This bomb-making manifesto describes weapon construction "
             "methods and extremist recruitment strategies."
         )
-        ocr = StubOcrAdapter(
-            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
-                encoding="utf-8",
-            ),
+        clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
+        storage = StubStorageAdapter(
+            default_bytes=clean_bytes,
             overrides={
-                files[2].storage_path: harmful_text,
+                files[2].storage_path: harmful_text.encode(),
             },
         )
-        service, _ = _build_service(ocr=ocr)
+        service, _ = _build_service(storage=storage)
         response = await service.validate(request)
 
         # All 5 files must appear in file_results
@@ -674,18 +678,15 @@ class TestMultiFilePartialTerminate:
         File 3: clean (PROCEED)
         """
         request, files = _make_multi_file_request()
-        pii_text = FIXTURES_DIR.joinpath("pii_content.txt").read_text(
-            encoding="utf-8",
-        )
-        ocr = StubOcrAdapter(
-            default_text=FIXTURES_DIR.joinpath("clean_document.txt").read_text(
-                encoding="utf-8",
-            ),
+        pii_bytes = FIXTURES_DIR.joinpath("pii_content.txt").read_bytes()
+        clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
+        storage = StubStorageAdapter(
+            default_bytes=clean_bytes,
             overrides={
-                files[1].storage_path: pii_text,
+                files[1].storage_path: pii_bytes,
             },
         )
-        service, _ = _build_service(ocr=ocr)
+        service, _ = _build_service(storage=storage)
         response = await service.validate(request)
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
