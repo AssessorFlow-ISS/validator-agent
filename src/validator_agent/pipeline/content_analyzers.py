@@ -49,7 +49,10 @@ Analyze the following document pages for:
 - Self-harm encouragement
 - Age-inappropriate content for primary school students
 
-Context matters: "World War II caused millions of deaths" is educational and acceptable. "Here's how to build a weapon" is not.
+Context matters:
+- "World War II caused millions of deaths" is educational and acceptable. "Here's how to build a weapon" is not.
+- Standard software engineering and IT terminology used in professional or academic context is acceptable, even if the literal interpretation sounds alarming. Examples: "truck factor" / "bus factor" (team resilience metric), "kill process", "zombie process", "orphan process", "dead code", "race condition", "master/slave", "man-in-the-middle", "brute force", "penetration testing", "exploit", "attack vector", "threat model". These are universally accepted industry terms.
+- Academic discussion of risks, failures, and negative outcomes in a professional context is educational, not harmful.
 
 For each finding, return a JSON array. If no issues found, return an empty array.
 Each finding must include: page (int), type ("harmful"), detail (string explaining the issue), original (the exact problematic text).
