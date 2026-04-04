@@ -43,11 +43,12 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
-def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any]:
+def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any]:
     """Construct the ValidatorService with adapter implementations.
 
-    Returns (service, event_publisher) — event_publisher is returned
-    separately so the lifespan can set up Pub/Sub subscriptions.
+    Returns (service, event_publisher, decision_audit) — event_publisher
+    is returned separately so the lifespan can set up Pub/Sub subscriptions;
+    decision_audit is returned for graceful pool shutdown.
     """
     # -- MRC adapter --------------------------------------------------------
     mrc = StubMrcAdapter()
@@ -69,7 +70,12 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any]:
     knowledge_service = StubKnowledgeServiceAdapter()
 
     # -- Decision Audit adapter ---------------------------------------------
-    decision_audit = StubDecisionAuditAdapter()
+    if config.audit_adapter == "postgres":
+        from validator_agent.adapters.decision_audit_postgres import PostgresDecisionAuditAdapter
+        decision_audit = PostgresDecisionAuditAdapter()
+        logger.info("using_postgres_decision_audit")
+    else:
+        decision_audit = StubDecisionAuditAdapter()
 
     # -- Event Publisher adapter --------------------------------------------
     if config.event_adapter == "stub":
@@ -82,9 +88,16 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any]:
         raise ValueError(f"Unknown EVENT_ADAPTER: {config.event_adapter}")
 
     # -- Storage adapter ----------------------------------------------------
-    storage = StubStorageAdapter()
+    if config.storage_adapter == "local":
+        from validator_agent.adapters.storage_local import LocalStorageAdapter
+        storage = LocalStorageAdapter()
+        logger.info("using_local_storage_adapter", upload_dir=os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads"))
+    else:
+        storage = StubStorageAdapter()
 
-    # -- Tracing adapter (Langfuse — Walfa implements real adapter) ---------
+    # -- Tracing adapter (config-driven via TRACING_ADAPTER env var) --------
+    # TRACING_ADAPTER=stub → StubTracingAdapter (console)
+    # TRACING_ADAPTER=langfuse → LangfuseTracingAdapter (real Langfuse SDK)
     tracing = get_tracing()
 
     # ValidatorService wraps Thet's 3-component pipeline.
@@ -104,7 +117,7 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any]:
         pipeline_fn=pipeline_fn,
     )
 
-    return service, event_publisher
+    return service, event_publisher, decision_audit
 
 
 def create_app() -> FastAPI:
@@ -112,7 +125,7 @@ def create_app() -> FastAPI:
     config = ValidatorConfig.from_env()
     logger.info("starting_validator_agent", config=config)
 
-    service, event_publisher = _build_service(config)
+    service, event_publisher, decision_audit = _build_service(config)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -166,6 +179,11 @@ def create_app() -> FastAPI:
                 logger.info("validator_listening", topic="assessorflow.validation.trigger")
 
         yield
+
+        # Shutdown: close the Postgres audit pool if active.
+        if hasattr(decision_audit, "close"):
+            await decision_audit.close()
+
         logger.info("validator_agent_shutting_down")
 
     application = FastAPI(
