@@ -484,7 +484,18 @@ class ValidatorService:
                 })
                 return steps
 
-            soft_desc = ". ".join(soft_items) if soft_items else "No issues"
+            # TERMINATE without hard gates = analyzers unavailable
+            if safety.overall_status == "TERMINATE":
+                reason = safety.termination_reason or safety.error_message or "Content safety unavailable"
+                steps.append({
+                    "step": step_num,
+                    "component": "safety_decision",
+                    "action": f"Content safety decision: TERMINATE. {reason}",
+                    "status": "TERMINATE",
+                })
+                return steps
+
+            soft_desc = ". ".join(soft_items) if soft_items else "No issues detected"
             steps.append({
                 "step": step_num,
                 "component": "safety_decision",
