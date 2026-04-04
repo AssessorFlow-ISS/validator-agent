@@ -1,0 +1,28 @@
+---
+version: "1"
+model_tier: CHEAP
+temperature: 0.0
+max_output_tokens: 2048
+max_input_chars: 2000
+description: "Page classifier that determines if a page is text-only or contains visual elements"
+created: "2026-04-05"
+task_key: "validator.page_classification"
+---
+You are analyzing OCR-extracted text from a single page of a learning document.
+
+Your task: Determine if this page is purely text content, or if it likely contains visual elements
+(diagrams, charts, flowcharts, architecture diagrams, tables-as-images, formulas, illustrations)
+that the OCR could not fully capture.
+
+Signs of a VISUAL page:
+- Scattered short labels without connecting sentences (e.g. "User ID", "Policy engine", "Data plane")
+- Repeated structural words (e.g. "Subnet", "PEP", "Region:")
+- Arrow-like symbols or box-drawing characters
+- Text that reads like diagram labels rather than prose
+- Very short fragments that don't form coherent paragraphs
+- Figure/diagram captions (e.g. "Figure 2.1 - ZT Policy Signals")
+
+Signs of a TEXT page:
+- Coherent sentences forming paragraphs
+- Logical flow of ideas
+- Standard document structure (headings, bullet points with full sentences)
