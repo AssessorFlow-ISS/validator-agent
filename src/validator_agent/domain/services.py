@@ -104,26 +104,24 @@ class ValidatorService:
         all_cleaned_text: list[str] = []
         all_warnings: list[dict] = []
         reasoning_steps: list[dict] = []
+        # Keep raw pipeline results for reasoning_steps extraction
+        pipeline_results: list[tuple[FileInfo, object]] = []
 
         for file_info in request.files:
-            result = await self._validate_single_file(
+            result, raw_pipeline = await self._validate_single_file(
                 file_info=file_info,
                 workflow_id=request.workflow_id,
             )
             file_results.append(result)
+            pipeline_results.append((file_info, raw_pipeline))
 
             if result.cleaned_text:
                 all_cleaned_text.append(result.cleaned_text)
             all_warnings.extend(result.assessor_warnings)
 
-            # Build reasoning steps from pipeline result
-            reasoning_steps.append({
-                "file": file_info.file_name,
-                "status": result.terminal_signal.status.value,
-                "reason_code": result.terminal_signal.reason_code.value,
-                "terminated_at": result.terminated_at_component,
-                "time_ms": result.total_time_ms,
-            })
+        # Build detailed per-component reasoning steps
+        for fi, raw in pipeline_results:
+            reasoning_steps.extend(self._build_reasoning_steps(fi, raw))
 
         overall_signal = self._compute_overall_signal(file_results)
 
@@ -158,8 +156,12 @@ class ValidatorService:
         *,
         file_info: FileInfo,
         workflow_id: str,
-    ) -> FileResult:
-        """Validate a single file through Thet's 3-component pipeline."""
+    ) -> tuple[FileResult, object]:
+        """Validate a single file through Thet's 3-component pipeline.
+
+        Returns (FileResult, raw_pipeline_result) — the raw result is
+        needed for per-component reasoning_steps extraction.
+        """
         # Download file bytes from storage
         file_bytes = await self._storage.download_file(file_info.storage_path)
 
@@ -195,26 +197,8 @@ class ValidatorService:
             message=message[:500],
         )
 
-        # Trace the pipeline result
-        await self._tracing.trace_tool_call(
-            workflow_id=workflow_id,
-            agent_name="validator-agent",
-            tool_name="thet-pipeline",
-            input_params={
-                "file_name": file_info.file_name,
-                "file_type": file_info.file_type,
-            },
-            output_summary={
-                "overall_status": pipeline_result.overall_status,
-                "termination_reason": pipeline_result.termination_reason,
-                "terminated_at_component": pipeline_result.terminated_at_component,
-                "total_time_ms": pipeline_result.total_time_ms,
-                "mrc_status": pipeline_result.mrc.overall_status if pipeline_result.mrc else None,
-                "ocr_word_count": pipeline_result.ocr.total_word_count if pipeline_result.ocr else 0,
-                "safety_status": pipeline_result.content_safety.overall_status if pipeline_result.content_safety else None,
-            },
-            latency_ms=pipeline_result.total_time_ms,
-        )
+        # Emit per-component traces to Langfuse (Sink 2)
+        await self._emit_component_traces(workflow_id, file_info, pipeline_result)
 
         logger.info(
             "validation_complete",
@@ -224,7 +208,7 @@ class ValidatorService:
             time_ms=pipeline_result.total_time_ms,
         )
 
-        return FileResult(
+        file_result = FileResult(
             file_name=file_info.file_name,
             terminal_signal=signal,
             cleaned_text=pipeline_result.cleaned_text,
@@ -232,6 +216,291 @@ class ValidatorService:
             total_time_ms=pipeline_result.total_time_ms,
             terminated_at_component=pipeline_result.terminated_at_component,
         )
+        return file_result, pipeline_result
+
+    async def _emit_component_traces(
+        self,
+        workflow_id: str,
+        file_info: FileInfo,
+        result: object,
+    ) -> None:
+        """Emit per-component Langfuse traces from ValidatorResult.
+
+        Each component gets its own TOOL span in Langfuse, providing
+        step-by-step visibility in the Agent Trace page.
+        """
+        mrc = getattr(result, "mrc", None)
+        ocr = getattr(result, "ocr", None)
+        safety = getattr(result, "content_safety", None)
+
+        # 1. MRC readability check
+        if mrc is not None:
+            await self._tracing.trace_tool_call(
+                workflow_id=workflow_id,
+                agent_name="validator-agent",
+                tool_name="mrc-vertex-ai",
+                input_params={"file_name": file_info.file_name},
+                output_summary={
+                    "overall_status": mrc.overall_status,
+                    "total_pages": mrc.total_pages,
+                    "readable_pages": mrc.readable_pages,
+                    "blurry_ratio": mrc.blurry_ratio,
+                    "excluded_pages": mrc.excluded_pages,
+                    "overall_confidence": mrc.overall_confidence,
+                },
+                latency_ms=mrc.inference_time_ms,
+            )
+
+        # 2. Document AI OCR
+        if ocr is not None:
+            text_pages = sum(1 for p in ocr.pages if p.classification == "TEXT")
+            visual_pages = sum(1 for p in ocr.pages if p.classification == "VISUAL")
+
+            await self._tracing.trace_tool_call(
+                workflow_id=workflow_id,
+                agent_name="validator-agent",
+                tool_name="documentai-ocr",
+                input_params={"file_name": file_info.file_name, "readable_pages": mrc.readable_page_numbers if mrc else []},
+                output_summary={
+                    "total_pages": ocr.total_pages,
+                    "total_word_count": ocr.total_word_count,
+                    "processing_mode": ocr.processing_mode,
+                    "text_pages": text_pages,
+                    "visual_pages": visual_pages,
+                    "visual_pages_processed": ocr.visual_pages_processed,
+                    "harmful_image_detected": ocr.harmful_image_detected,
+                },
+                latency_ms=ocr.ocr_time_ms,
+            )
+
+            # 3. Page classification detail
+            if ocr.pages:
+                page_details = [
+                    {"page": p.page_number, "classification": p.classification, "source": p.source, "words": p.word_count}
+                    for p in ocr.pages
+                ]
+                await self._tracing.trace_tool_call(
+                    workflow_id=workflow_id,
+                    agent_name="validator-agent",
+                    tool_name="page-classifier",
+                    input_params={"page_count": len(ocr.pages)},
+                    output_summary={"pages": page_details, "text_count": text_pages, "visual_count": visual_pages},
+                    latency_ms=0,
+                )
+
+            # 4. Image moderation (if harmful image detected)
+            if ocr.harmful_image_detected:
+                await self._tracing.trace_tool_call(
+                    workflow_id=workflow_id,
+                    agent_name="validator-agent",
+                    tool_name="openai-image-moderation",
+                    input_params={"page": ocr.harmful_image_page},
+                    output_summary={"flagged": True, "detail": ocr.harmful_image_detail},
+                    latency_ms=0,
+                )
+
+        # 5. Content safety pipeline
+        if safety is not None:
+            findings_summary = {
+                "harmful": len(safety.harmful_findings),
+                "pii": len(safety.pii_findings),
+                "religious_political": len(safety.religious_political_findings),
+                "copyright": len(safety.copyright_findings),
+                "misinformation": len(safety.misinformation_findings),
+            }
+            await self._tracing.trace_tool_call(
+                workflow_id=workflow_id,
+                agent_name="validator-agent",
+                tool_name="content-safety-pipeline",
+                input_params={"page_count": ocr.total_pages if ocr else 0},
+                output_summary={
+                    "overall_status": safety.overall_status,
+                    "findings": findings_summary,
+                    "total_findings": sum(findings_summary.values()),
+                    "pii_redacted": len(safety.pii_findings),
+                    "assessor_warnings": len(safety.assessor_warnings),
+                    "cleaned_text_length": len(safety.cleaned_text),
+                },
+                latency_ms=0,
+            )
+
+    @staticmethod
+    def _build_reasoning_steps(file_info: FileInfo, result: object) -> list[dict]:
+        """Extract per-component reasoning steps from ValidatorResult.
+
+        These populate the reasoning chain panel in the Agent Trace page.
+        """
+        steps: list[dict] = []
+        step_num = 0
+
+        mrc = getattr(result, "mrc", None)
+        ocr = getattr(result, "ocr", None)
+        safety = getattr(result, "content_safety", None)
+        terminated_at = getattr(result, "terminated_at_component", None)
+
+        # Step 1: MRC
+        if mrc is not None:
+            step_num += 1
+            excluded = f", excluded pages: {mrc.excluded_pages}" if mrc.excluded_pages else ""
+            steps.append({
+                "step": step_num,
+                "component": "mrc",
+                "action": (
+                    f"MRC readability check: {mrc.readable_pages}/{mrc.total_pages} pages readable, "
+                    f"confidence {mrc.overall_confidence:.3f}, blurry_ratio {mrc.blurry_ratio:.0%}{excluded}"
+                ),
+                "status": mrc.overall_status,
+                "latency_ms": mrc.inference_time_ms,
+            })
+            if terminated_at == "mrc":
+                return steps
+
+        # Step 2: OCR
+        if ocr is not None:
+            step_num += 1
+            steps.append({
+                "step": step_num,
+                "component": "ocr",
+                "action": (
+                    f"Document AI OCR: {ocr.total_word_count} words from {ocr.total_pages} pages "
+                    f"(mode: {ocr.processing_mode or 'unknown'})"
+                ),
+                "status": ocr.overall_status,
+                "latency_ms": ocr.ocr_time_ms,
+            })
+
+            # Step 3: Page classification
+            if ocr.pages:
+                text_count = sum(1 for p in ocr.pages if p.classification == "TEXT")
+                visual_count = sum(1 for p in ocr.pages if p.classification == "VISUAL")
+                step_num += 1
+                steps.append({
+                    "step": step_num,
+                    "component": "page_classification",
+                    "action": f"Page classification: {text_count} TEXT, {visual_count} VISUAL",
+                    "pages": [
+                        {"page": p.page_number, "class": p.classification, "source": p.source}
+                        for p in ocr.pages
+                    ],
+                })
+
+            # Step 3b: Image moderation (if harmful)
+            if ocr.harmful_image_detected:
+                step_num += 1
+                steps.append({
+                    "step": step_num,
+                    "component": "image_moderation",
+                    "action": f"Image moderation: FLAGGED on page {ocr.harmful_image_page}. {ocr.harmful_image_detail or ''}",
+                    "status": "TERMINATE",
+                })
+                return steps
+
+            # Step 3c: Visual understanding (if visual pages processed)
+            if ocr.visual_pages_processed and ocr.visual_pages_processed > 0:
+                step_num += 1
+                visual_details = [
+                    f"page {p.page_number}: {p.source} (attempts: {p.visual_attempts})"
+                    for p in ocr.pages if p.classification == "VISUAL"
+                ]
+                steps.append({
+                    "step": step_num,
+                    "component": "visual_understanding",
+                    "action": f"Visual understanding: {ocr.visual_pages_processed} pages enhanced. {', '.join(visual_details)}",
+                })
+
+            if terminated_at == "ocr":
+                return steps
+
+        # Step 4: Text moderation pre-filter
+        if safety is not None:
+            step_num += 1
+            if safety.overall_status == "TERMINATE" and safety.termination_reason == "HARMFUL_CONTENT" and not safety.harmful_findings:
+                steps.append({
+                    "step": step_num,
+                    "component": "text_moderation",
+                    "action": f"OpenAI Moderation pre-filter: FLAGGED ({safety.termination_detail or 'harmful content'})",
+                    "status": "TERMINATE",
+                })
+                return steps
+            steps.append({
+                "step": step_num,
+                "component": "text_moderation",
+                "action": "OpenAI Moderation pre-filter: PASSED (free)",
+                "status": "PASSED",
+            })
+
+            # Step 5: Content analyzers
+            findings = {
+                "A": len(safety.harmful_findings),
+                "B": len(safety.misinformation_findings),
+                "C": len(safety.pii_findings) + len(safety.copyright_findings),
+                "D": len(safety.religious_political_findings),
+            }
+            step_num += 1
+            steps.append({
+                "step": step_num,
+                "component": "content_analyzers",
+                "action": (
+                    f"4 parallel analyzers: "
+                    f"A({findings['A']} harmful) B({findings['B']} misinfo) "
+                    f"C({findings['C']} PII/copyright) D({findings['D']} religious/political)"
+                ),
+                "findings_total": sum(findings.values()),
+            })
+
+            # Step 6: Synthesizer (inferred from findings presence)
+            total = sum(findings.values())
+            step_num += 1
+            steps.append({
+                "step": step_num,
+                "component": "synthesizer",
+                "action": f"Synthesizer: {total} finding(s) confirmed after voting",
+            })
+
+            # Step 7: Content safety decision
+            hard_gates = []
+            if safety.harmful_detected:
+                hard_gates.append("harmful")
+            if safety.religious_political_detected:
+                hard_gates.append("religious/political")
+
+            soft_items = []
+            if safety.pii_detected:
+                soft_items.append(f"{len(safety.pii_findings)} PII redacted")
+            if safety.copyright_detected:
+                soft_items.append(f"{len(safety.copyright_findings)} copyright warned")
+            if safety.misinformation_detected:
+                soft_items.append(f"{len(safety.misinformation_findings)} misinformation warned")
+
+            step_num += 1
+            if hard_gates:
+                steps.append({
+                    "step": step_num,
+                    "component": "safety_decision",
+                    "action": f"Content safety decision: TERMINATE. Hard gate(s): {', '.join(hard_gates)}",
+                    "status": "TERMINATE",
+                })
+                return steps
+
+            soft_desc = ". ".join(soft_items) if soft_items else "No issues"
+            steps.append({
+                "step": step_num,
+                "component": "safety_decision",
+                "action": f"Content safety decision: {safety.overall_status}. {soft_desc}",
+                "status": safety.overall_status,
+            })
+
+        # Step 8: Knowledge Service write (on PROCEED)
+        cleaned_len = len(getattr(result, "cleaned_text", "") or "")
+        if cleaned_len > 0 and getattr(result, "overall_status", "") != "TERMINATE":
+            step_num += 1
+            steps.append({
+                "step": step_num,
+                "component": "knowledge_service",
+                "action": f"Forwarded {cleaned_len} chars (PII-redacted) to Knowledge Service for chunking and embedding",
+            })
+
+        return steps
 
     @staticmethod
     def _compute_overall_signal(file_results: list[FileResult]) -> TerminalSignal:

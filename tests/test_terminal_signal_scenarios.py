@@ -326,8 +326,9 @@ class TestDecisionAuditLogging:
         assert "reasoning_steps" in payload
         assert isinstance(payload["reasoning_steps"], list)
         assert len(payload["reasoning_steps"]) > 0
-        assert "file" in payload["reasoning_steps"][0]
-        assert "status" in payload["reasoning_steps"][0]
+        assert "step" in payload["reasoning_steps"][0]
+        assert "component" in payload["reasoning_steps"][0]
+        assert "action" in payload["reasoning_steps"][0]
 
         # Payload must include prompt_version per ADR-39
         assert "prompt_version" in payload
@@ -629,15 +630,15 @@ class TestMultiFilePartialTerminate:
         # Overall terminal_signal in audit must be TERMINATE
         assert payload["output_summary"]["terminal_signal"]["status"] == "TERMINATE"
 
-        # Reasoning steps must span all 3 files
+        # Reasoning steps now contain per-component detail for all 3 files
         steps = payload["reasoning_steps"]
-        assert len(steps) == 3
-
-        # Each step has per-file data (file, status, reason_code)
-        all_files = [s["file"] for s in steps]
-        assert "document_1.pdf" in all_files
-        assert "document_2.pdf" in all_files
-        assert "document_3.pdf" in all_files
+        # Clean files produce ~8 steps each, terminated file fewer — total > 3
+        assert len(steps) >= 3
+        # All steps should have component and action fields
+        assert all("component" in s and "action" in s for s in steps)
+        # MRC step should be present (first step for every file)
+        mrc_steps = [s for s in steps if s["component"] == "mrc"]
+        assert len(mrc_steps) == 3  # one MRC check per file
 
     async def test_multi_file_response_contains_all_file_results(self) -> None:
         """Response file_results list must contain an entry for every input file.

@@ -9,11 +9,9 @@ from __future__ import annotations
 import os
 from enum import Enum
 
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-CLASSIFIER_MODEL = os.getenv("CLASSIFIER_MODEL", "gpt-4o-mini")
+from validator_agent.pipeline.llm_client import generate_structured
 
 CLASSIFICATION_PROMPT = """You are analyzing OCR-extracted text from a single page of a learning document.
 
@@ -59,22 +57,15 @@ def classify_page(ocr_text: str) -> str:
     if not ocr_text.strip():
         return "VISUAL"
 
-    if not OPENAI_API_KEY:
-        return _heuristic_classify(ocr_text)
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
     try:
-        response = client.beta.chat.completions.parse(
-            model=CLASSIFIER_MODEL,
-            messages=[
-                {"role": "system", "content": CLASSIFICATION_PROMPT},
-                {"role": "user", "content": ocr_text[:2000]},
-            ],
-            response_format=ClassificationResult,
+        result, _resp = generate_structured(
+            task_key="validator.page_classification",
+            system_prompt=CLASSIFICATION_PROMPT,
+            user_prompt=ocr_text[:2000],
+            response_model=ClassificationResult,
             temperature=0,
+            prompt_version="validator/page_classifier@v1",
         )
-        result = response.choices[0].message.parsed
         return result.classification.value
     except Exception:
         return _heuristic_classify(ocr_text)

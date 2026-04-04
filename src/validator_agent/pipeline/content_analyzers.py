@@ -9,9 +9,9 @@ from __future__ import annotations
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from validator_agent.pipeline.llm_client import generate_structured
 from validator_agent.pipeline.models import PageOcrResult
 
 
@@ -29,9 +29,6 @@ class AnalyzerResponse(BaseModel):
 class AnalyzerResult(BaseModel):
     findings: list[dict] = Field(default_factory=list)
     error: str | None = None
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-ANALYZER_MODEL = os.getenv("ANALYZER_MODEL", "gpt-4o")
 
 
 def _format_pages_for_prompt(pages: list[PageOcrResult]) -> str:
@@ -143,24 +140,18 @@ For each finding, include:
 
 
 def _run_analyzer(system_prompt: str, formatted_pages: str, analyzer_name: str) -> AnalyzerResult:
-    """Run a single analyzer and return parsed findings."""
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
+    """Run a single analyzer via Model Broker and return parsed findings."""
     try:
-        response = client.beta.chat.completions.parse(
-            model=ANALYZER_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": formatted_pages},
-            ],
-            response_format=AnalyzerResponse,
+        parsed, _resp = generate_structured(
+            task_key=f"validator.content_analysis.{analyzer_name}",
+            system_prompt=system_prompt,
+            user_prompt=formatted_pages,
+            response_model=AnalyzerResponse,
             temperature=0,
+            prompt_version=f"validator/{analyzer_name}@v1",
         )
 
-        parsed = response.choices[0].message.parsed
         findings = [f.model_dump() for f in parsed.findings]
-
-        # Tag each finding with the analyzer source
         for f in findings:
             f["source"] = analyzer_name
 

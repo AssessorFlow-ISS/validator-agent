@@ -328,8 +328,9 @@ class TestDecisionAuditLogging:
         payload = da_ref.entries[0].payload
         assert "reasoning_steps" in payload
         assert len(payload["reasoning_steps"]) > 0
-        assert "file" in payload["reasoning_steps"][0]
-        assert "status" in payload["reasoning_steps"][0]
+        assert "step" in payload["reasoning_steps"][0]
+        assert "component" in payload["reasoning_steps"][0]
+        assert "action" in payload["reasoning_steps"][0]
 
     async def test_audit_contains_prompt_version(self) -> None:
         da = StubDecisionAuditAdapter()

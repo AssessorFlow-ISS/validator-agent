@@ -11,14 +11,11 @@ from __future__ import annotations
 import json
 import os
 
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from validator_agent.pipeline.content_analyzers import AllAnalyzerResults
+from validator_agent.pipeline.llm_client import generate_structured
 from validator_agent.pipeline.models import Finding, PageOcrResult
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-SYNTHESIZER_MODEL = os.getenv("SYNTHESIZER_MODEL", "gpt-4o")
 
 SYNTHESIZER_SYSTEM = """You are a content safety synthesizer. You receive findings from 4 independent analyzers who reviewed the same document, plus the original document text.
 
@@ -83,10 +80,7 @@ def synthesize_findings(
     analyzer_results: AllAnalyzerResults,
     pages: list[PageOcrResult],
 ) -> SynthesisResult:
-    """Consolidate findings from 3 analyzers using GPT-4o synthesizer."""
-    if not OPENAI_API_KEY:
-        return _merge_without_synthesis(analyzer_results)
-
+    """Consolidate findings from 4 analyzers via Model Broker."""
     all_findings = {
         "analyzer_a": analyzer_results.analyzer_a.findings,
         "analyzer_b": analyzer_results.analyzer_b.findings,
@@ -107,20 +101,16 @@ Original document text:
 
 Consolidate the findings following the instructions."""
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
     try:
-        response = client.beta.chat.completions.parse(
-            model=SYNTHESIZER_MODEL,
-            messages=[
-                {"role": "system", "content": SYNTHESIZER_SYSTEM},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format=SynthesizerResponse,
+        parsed, _resp = generate_structured(
+            task_key="validator.content_synthesizer",
+            system_prompt=SYNTHESIZER_SYSTEM,
+            user_prompt=user_prompt,
+            response_model=SynthesizerResponse,
             temperature=0,
+            prompt_version="validator/content_synthesizer@v1",
         )
 
-        parsed = response.choices[0].message.parsed
         return SynthesisResult(
             findings=[f.model_dump() for f in parsed.findings],
             discarded=[d.model_dump() for d in parsed.discarded],

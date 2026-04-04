@@ -8,6 +8,11 @@ Uses Evaluator-Optimizer pattern with structured per-dimension feedback.
 Also includes image moderation via OpenAI Moderation API — catches harmful/sexual/violent
 imagery BEFORE spending on the generator. If flagged, the page is marked as harmful
 and the entire file terminates (no need to proceed to Component 3).
+
+NOTE: This file uses OpenAI directly (not Model Broker) because the generator
+and evaluator send page IMAGES to GPT-4o. Model Broker does not yet support
+multimodal image payloads. Image moderation also stays direct (free API, not LLM).
+TODO: Route through Model Broker when multimodal support is added.
 """
 
 from __future__ import annotations
