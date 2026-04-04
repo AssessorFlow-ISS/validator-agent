@@ -43,12 +43,13 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
-def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any]:
+def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any, Any]:
     """Construct the ValidatorService with adapter implementations.
 
-    Returns (service, event_publisher, decision_audit) — event_publisher
-    is returned separately so the lifespan can set up Pub/Sub subscriptions;
-    decision_audit is returned for graceful pool shutdown.
+    Returns (service, event_publisher, decision_audit, knowledge_service) —
+    event_publisher is returned separately so the lifespan can set up Pub/Sub
+    subscriptions; decision_audit and knowledge_service are returned for
+    graceful pool/client shutdown.
     """
     # -- MRC adapter --------------------------------------------------------
     mrc = StubMrcAdapter()
@@ -67,7 +68,12 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any]
         raise ValueError(f"Unknown LLM_PROVIDER: {config.llm_provider}")
 
     # -- Knowledge Service adapter ------------------------------------------
-    knowledge_service = StubKnowledgeServiceAdapter()
+    if config.knowledge_adapter == "http":
+        from validator_agent.adapters.knowledge_service_http import KnowledgeServiceHttpAdapter
+        knowledge_service = KnowledgeServiceHttpAdapter()
+        logger.info("using_http_knowledge_service", url=os.environ.get("KNOWLEDGE_SERVICE_URL", "http://localhost:8020"))
+    else:
+        knowledge_service = StubKnowledgeServiceAdapter()
 
     # -- Decision Audit adapter ---------------------------------------------
     if config.audit_adapter == "postgres":
@@ -117,7 +123,7 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any]
         pipeline_fn=pipeline_fn,
     )
 
-    return service, event_publisher, decision_audit
+    return service, event_publisher, decision_audit, knowledge_service
 
 
 def create_app() -> FastAPI:
@@ -125,7 +131,7 @@ def create_app() -> FastAPI:
     config = ValidatorConfig.from_env()
     logger.info("starting_validator_agent", config=config)
 
-    service, event_publisher, decision_audit = _build_service(config)
+    service, event_publisher, decision_audit, knowledge_service = _build_service(config)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -180,7 +186,9 @@ def create_app() -> FastAPI:
 
         yield
 
-        # Shutdown: close the Postgres audit pool if active.
+        # Shutdown: close adapter pools/clients gracefully.
+        if hasattr(knowledge_service, "close"):
+            await knowledge_service.close()
         if hasattr(decision_audit, "close"):
             await decision_audit.close()
 
