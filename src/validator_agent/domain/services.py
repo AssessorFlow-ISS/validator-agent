@@ -19,7 +19,6 @@ Dale's infrastructure layer (this file):
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections.abc import Callable
 
@@ -168,8 +167,10 @@ class ValidatorService:
         # Download file bytes from storage
         file_bytes = await self._storage.download_file(file_info.storage_path)
 
-        # Set workflow_id for Model Broker session tracking (token budgets)
-        os.environ["CURRENT_WORKFLOW_ID"] = workflow_id
+        # Set workflow context for Model Broker session tracking (token budgets)
+        # Uses contextvars — thread-safe, auto-propagated to asyncio.to_thread()
+        from validator_agent.pipeline.llm_client import set_workflow_context
+        set_workflow_context(workflow_id)
 
         # Run pipeline (Thet's real pipeline or injected stub)
         if self._pipeline_fn is not None:
