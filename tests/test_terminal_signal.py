@@ -18,8 +18,8 @@ class TestTerminalSignalStatus:
     def test_terminate_value(self) -> None:
         assert TerminalSignalStatus.TERMINATE == "TERMINATE"
 
-    def test_only_two_statuses(self) -> None:
-        assert len(TerminalSignalStatus) == 2
+    def test_three_statuses(self) -> None:
+        assert len(TerminalSignalStatus) == 3
 
 
 class TestReasonCode:
@@ -28,16 +28,19 @@ class TestReasonCode:
             "VALIDATION_PASSED",
             "BLURRY_UNREADABLE",
             "OCR_FAILED",
+            "HARMFUL_IMAGE",
             "CONTENT_POLICY_VIOLATION",
             "HARMFUL_CONTENT",
+            "RELIGIOUS_POLITICAL_VIOLATION",
+            "CONTENT_SAFETY_UNAVAILABLE",
             "PII_DETECTED",
             "COPYRIGHT_VIOLATION",
         }
         actual = {code.value for code in ReasonCode}
         assert actual == expected
 
-    def test_seven_reason_codes(self) -> None:
-        assert len(ReasonCode) == 7
+    def test_ten_reason_codes(self) -> None:
+        assert len(ReasonCode) == 10
 
 
 class TestTerminalSignal:

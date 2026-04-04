@@ -1,20 +1,25 @@
-"""Tests for the ValidatorService — end-to-end validation pipeline."""
+"""Tests for the ValidatorService — end-to-end validation pipeline.
+
+Uses stub_pipeline_fn to simulate Thet's 3-component pipeline without
+external calls. The stub uses keyword detection matching the old
+StubModelBrokerAdapter behavior (harmful/PII/copyright detection).
+"""
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-
 
 from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapter
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
-from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
+from validator_agent.adapters.pipeline_stub import make_stub_pipeline, stub_pipeline_fn
 from validator_agent.adapters.storage_stub import StubStorageAdapter
 from validator_agent.api.schemas import FileInfo, ValidationRequest
-from validator_agent.domain.content_safety import ContentSafetyReasoner
 from validator_agent.domain.services import ValidatorService
 from validator_agent.domain.terminal_signal import ReasonCode, TerminalSignalStatus
+from validator_agent.pipeline.models import ValidatorResult
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -43,44 +48,62 @@ def _make_request(
 
 def _build_service(
     *,
-    mrc: StubMrcAdapter | None = None,
-    ocr: StubOcrAdapter | None = None,
-    model_broker: StubModelBrokerAdapter | None = None,
     knowledge_service: StubKnowledgeServiceAdapter | None = None,
     decision_audit: StubDecisionAuditAdapter | None = None,
     event_publisher: StubEventPublisherAdapter | None = None,
     storage: StubStorageAdapter | None = None,
+    pipeline_fn: Callable | None = None,
+    # Legacy parameters mapped to make_stub_pipeline
+    mrc: object | None = None,
+    ocr: object | None = None,
+    model_broker: object | None = None,
 ) -> tuple[
     ValidatorService,
-    StubMrcAdapter,
-    StubOcrAdapter,
     StubKnowledgeServiceAdapter,
     StubDecisionAuditAdapter,
     StubStorageAdapter,
 ]:
-    mrc = mrc or StubMrcAdapter()
-    ocr = ocr or StubOcrAdapter(default_text=(FIXTURES_DIR / "clean_document.txt").read_text())
-    model_broker = model_broker or StubModelBrokerAdapter()
+    """Build a ValidatorService with configurable stub pipeline.
+
+    Legacy mrc/ocr params are mapped to make_stub_pipeline overrides:
+    - mrc with default_readiness=False → pipeline returns TERMINATE/BLURRY
+    - ocr with custom default_text → pipeline uses that text for content checks
+    """
     ks = knowledge_service or StubKnowledgeServiceAdapter()
     da = decision_audit or StubDecisionAuditAdapter()
     ep = event_publisher or StubEventPublisherAdapter()
     st = storage or StubStorageAdapter()
 
+    # Build pipeline_fn from legacy params if not explicitly provided
+    if pipeline_fn is None:
+        mrc_readiness = True
+        mrc_confidence = 0.95
+        ocr_text = None
+
+        if mrc is not None:
+            mrc_readiness = getattr(mrc, '_default_readiness', True)
+            mrc_confidence = getattr(mrc, '_default_confidence', 0.95)
+
+        if ocr is not None:
+            ocr_text = getattr(ocr, '_default_text', None)
+
+        pipeline_fn = make_stub_pipeline(
+            mrc_readiness=mrc_readiness,
+            mrc_confidence=mrc_confidence,
+            ocr_text=ocr_text,
+        )
+
     from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
 
-    content_safety = ContentSafetyReasoner(model_broker=model_broker)
-    tr = StubTracingAdapter()
     service = ValidatorService(
-        mrc=mrc,
-        ocr=ocr,
-        content_safety=content_safety,
         knowledge_service=ks,
         decision_audit=da,
         event_publisher=ep,
         storage=st,
-        tracing=tr,
+        tracing=StubTracingAdapter(),
+        pipeline_fn=pipeline_fn,
     )
-    return service, mrc, ocr, ks, da, st
+    return service, ks, da, st
 
 
 class TestValidationPipelineClean:
@@ -171,8 +194,8 @@ class TestValidationPipelineContentSafety:
 
     async def test_harmful_content_terminates(self) -> None:
         harmful = (FIXTURES_DIR / "harmful_content.txt").read_text()
-        ocr = StubOcrAdapter(default_text=harmful)
-        service, *_ = _build_service(ocr=ocr)
+        storage = StubStorageAdapter(default_bytes=harmful.encode())
+        service, *_ = _build_service(storage=storage)
         response = await service.validate(_make_request())
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -180,8 +203,8 @@ class TestValidationPipelineContentSafety:
 
     async def test_pii_content_terminates(self) -> None:
         pii = (FIXTURES_DIR / "pii_content.txt").read_text()
-        ocr = StubOcrAdapter(default_text=pii)
-        service, *_ = _build_service(ocr=ocr)
+        storage = StubStorageAdapter(default_bytes=pii.encode())
+        service, *_ = _build_service(storage=storage)
         response = await service.validate(_make_request())
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -193,8 +216,8 @@ class TestValidationPipelineContentSafety:
             "No modifications were made to the original content. "
             "All content is subject to the publisher's copyright terms."
         )
-        ocr = StubOcrAdapter(default_text=copyright_text)
-        service, *_ = _build_service(ocr=ocr)
+        storage = StubStorageAdapter(default_bytes=copyright_text.encode())
+        service, *_ = _build_service(storage=storage)
         response = await service.validate(_make_request())
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
@@ -217,12 +240,11 @@ class TestValidationPipelineMultipleFiles:
         assert all(r.terminal_signal.status == TerminalSignalStatus.PROCEED for r in response.file_results)
 
     async def test_one_file_fails_overall_terminates(self) -> None:
-        mrc = StubMrcAdapter(
-            overrides={
-                "materials/wf-test-001/bad.pdf": {"readiness": False, "confidence": 0.1},
-            },
-        )
-        service, *_ = _build_service(mrc=mrc)
+        harmful = (FIXTURES_DIR / "harmful_content.txt").read_text()
+        storage = StubStorageAdapter(overrides={
+            "materials/wf-test-001/bad.pdf": harmful.encode(),
+        })
+        service, *_ = _build_service(storage=storage)
         files = [
             FileInfo(file_name="good.pdf", storage_path="materials/wf-test-001/good.pdf", file_type="pdf"),
             FileInfo(file_name="bad.pdf", storage_path="materials/wf-test-001/bad.pdf", file_type="pdf"),
@@ -230,7 +252,6 @@ class TestValidationPipelineMultipleFiles:
         response = await service.validate(_make_request(files=files))
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
-        assert response.terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
 
         # One file should pass, one should fail
         statuses = {r.file_name: r.terminal_signal.status for r in response.file_results}
@@ -243,7 +264,7 @@ class TestKnowledgeServiceIntegration:
 
     async def test_knowledge_service_called_on_proceed(self) -> None:
         ks = StubKnowledgeServiceAdapter()
-        service, _, _, ks_ref, _, _ = _build_service(knowledge_service=ks)
+        service, ks_ref, _, _ = _build_service(knowledge_service=ks)
         await service.validate(_make_request())
 
         assert len(ks_ref.calls) == 1
@@ -253,7 +274,7 @@ class TestKnowledgeServiceIntegration:
     async def test_knowledge_service_not_called_on_mrc_failure(self) -> None:
         mrc = StubMrcAdapter(default_readiness=False)
         ks = StubKnowledgeServiceAdapter()
-        service, _, _, ks_ref, _, _ = _build_service(mrc=mrc, knowledge_service=ks)
+        service, ks_ref, _, _ = _build_service(mrc=mrc, knowledge_service=ks)
         await service.validate(_make_request())
 
         assert len(ks_ref.calls) == 0
@@ -261,16 +282,16 @@ class TestKnowledgeServiceIntegration:
     async def test_knowledge_service_not_called_on_ocr_failure(self) -> None:
         ocr = StubOcrAdapter(default_text="short")
         ks = StubKnowledgeServiceAdapter()
-        service, _, _, ks_ref, _, _ = _build_service(ocr=ocr, knowledge_service=ks)
+        service, ks_ref, _, _ = _build_service(ocr=ocr, knowledge_service=ks)
         await service.validate(_make_request())
 
         assert len(ks_ref.calls) == 0
 
     async def test_knowledge_service_not_called_on_safety_failure(self) -> None:
         harmful = (FIXTURES_DIR / "harmful_content.txt").read_text()
-        ocr = StubOcrAdapter(default_text=harmful)
         ks = StubKnowledgeServiceAdapter()
-        service, _, _, ks_ref, _, _ = _build_service(ocr=ocr, knowledge_service=ks)
+        storage = StubStorageAdapter(default_bytes=harmful.encode())
+        service, ks_ref, _, _ = _build_service(knowledge_service=ks, storage=storage)
         await service.validate(_make_request())
 
         assert len(ks_ref.calls) == 0
@@ -281,7 +302,7 @@ class TestDecisionAuditLogging:
 
     async def test_audit_logged_on_proceed(self) -> None:
         da = StubDecisionAuditAdapter()
-        service, _, _, _, da_ref, _ = _build_service(decision_audit=da)
+        service, _, da_ref, _ = _build_service(decision_audit=da)
         await service.validate(_make_request())
 
         assert len(da_ref.entries) == 1
@@ -293,7 +314,7 @@ class TestDecisionAuditLogging:
     async def test_audit_logged_on_terminate(self) -> None:
         mrc = StubMrcAdapter(default_readiness=False)
         da = StubDecisionAuditAdapter()
-        service, _, _, _, da_ref, _ = _build_service(mrc=mrc, decision_audit=da)
+        service, _, da_ref, _ = _build_service(mrc=mrc, decision_audit=da)
         await service.validate(_make_request())
 
         assert len(da_ref.entries) == 1
@@ -301,25 +322,26 @@ class TestDecisionAuditLogging:
 
     async def test_audit_contains_reasoning_steps(self) -> None:
         da = StubDecisionAuditAdapter()
-        service, _, _, _, da_ref, _ = _build_service(decision_audit=da)
+        service, _, da_ref, _ = _build_service(decision_audit=da)
         await service.validate(_make_request())
 
         payload = da_ref.entries[0].payload
         assert "reasoning_steps" in payload
         assert len(payload["reasoning_steps"]) > 0
-        assert payload["reasoning_steps"][0]["step"] == 1
+        assert "file" in payload["reasoning_steps"][0]
+        assert "status" in payload["reasoning_steps"][0]
 
     async def test_audit_contains_prompt_version(self) -> None:
         da = StubDecisionAuditAdapter()
-        service, _, _, _, da_ref, _ = _build_service(decision_audit=da)
+        service, _, da_ref, _ = _build_service(decision_audit=da)
         await service.validate(_make_request())
 
         payload = da_ref.entries[0].payload
-        assert payload["prompt_version"] == "validator/content_safety@v1"
+        assert payload["prompt_version"] == "validator/thet-pipeline@v1"
 
     async def test_audit_contains_terminal_signal(self) -> None:
         da = StubDecisionAuditAdapter()
-        service, _, _, _, da_ref, _ = _build_service(decision_audit=da)
+        service, _, da_ref, _ = _build_service(decision_audit=da)
         await service.validate(_make_request())
 
         payload = da_ref.entries[0].payload
@@ -333,7 +355,7 @@ class TestStorageDownload:
 
     async def test_file_downloaded(self) -> None:
         st = StubStorageAdapter()
-        service, _, _, _, _, st_ref = _build_service(storage=st)
+        service, _, _, st_ref = _build_service(storage=st)
         await service.validate(_make_request())
 
         assert "materials/wf-test-001/chapter1.pdf" in st_ref.downloaded

@@ -1,22 +1,26 @@
 """ValidatorService — core validation pipeline.
 
-Orchestrates the three-step validation flow for each file:
-  1. MRC blur/readability check
-  2. OCR text extraction
-  3. Content safety LLM reasoning
+Bridges Thet's 3-component pipeline (validate_file) to Dale's hexagonal
+infrastructure (ports for Knowledge Service, Decision Audit, Pub/Sub, Langfuse).
 
-On PROCEED, extracted text is forwarded to the Knowledge Service for
-chunking and embedding.  On TERMINATE (any file), the overall result is
-TERMINATE and the Orchestrator halts the workflow.
+Thet's pipeline (validator_agent.pipeline):
+  Component 1: MRC (Vertex AI EfficientNet-B0) — per-page readability
+  Component 2: OCR (Document AI + GPT-4o-mini classification + GPT-4o visual understanding)
+  Component 3: Content Safety (Moderation API + 4 parallel GPT-4o analyzers + synthesizer)
 
-Every validation decision is logged to the Decision Audit Service for the
-immutable audit trail (Invariant #5).
+Dale's infrastructure layer (this file):
+  - Download files via StoragePort
+  - Call Thet's pipeline (sync → async bridge)
+  - Map ValidatorResult → Terminal Signal
+  - Forward cleaned_text to Knowledge Service
+  - Log decisions to Decision Audit (dual-sink)
+  - Trace to Langfuse via TracingPort
 """
 from __future__ import annotations
 
+import asyncio
 import time
-import uuid
-from datetime import datetime, timezone
+from collections.abc import Callable
 
 import structlog
 
@@ -26,7 +30,6 @@ from validator_agent.api.schemas import (
     ValidationRequest,
     ValidationResponse,
 )
-from validator_agent.domain.content_safety import ContentSafetyReasoner
 from validator_agent.domain.terminal_signal import (
     ReasonCode,
     TerminalSignal,
@@ -35,81 +38,119 @@ from validator_agent.domain.terminal_signal import (
 from validator_agent.ports.decision_audit_port import DecisionAuditPort
 from validator_agent.ports.event_publisher_port import EventPublisherPort
 from validator_agent.ports.knowledge_service_port import KnowledgeServicePort
-from validator_agent.ports.mrc_port import MrcPort
-from validator_agent.ports.ocr_port import OcrPort
 from validator_agent.ports.storage_port import StoragePort
 
 # Shared ports and models from af-shared (B3 unification)
-from af_shared.models.domain import DecisionLogEntry, ModelResponse
+from af_shared.models.domain import DecisionLogEntry
 from af_shared.ports.tracing import TracingPort
 
 logger = structlog.get_logger(__name__)
 
-# Minimum viable text length from OCR to consider extraction successful
-_MIN_OCR_TEXT_LENGTH = 50
+# Map Thet's termination_reason strings to Dale's ReasonCode enum
+_REASON_CODE_MAP: dict[str | None, ReasonCode] = {
+    "BLURRY_UNREADABLE": ReasonCode.BLURRY_UNREADABLE,
+    "OCR_FAILED": ReasonCode.OCR_FAILED,
+    "HARMFUL_IMAGE": ReasonCode.HARMFUL_IMAGE,
+    "HARMFUL_CONTENT": ReasonCode.HARMFUL_CONTENT,
+    "RELIGIOUS_POLITICAL_VIOLATION": ReasonCode.RELIGIOUS_POLITICAL_VIOLATION,
+    "CONTENT_SAFETY_UNAVAILABLE": ReasonCode.CONTENT_SAFETY_UNAVAILABLE,
+    "PII_DETECTED": ReasonCode.PII_DETECTED,
+    "COPYRIGHT_VIOLATION": ReasonCode.COPYRIGHT_VIOLATION,
+    "CONTENT_POLICY_VIOLATION": ReasonCode.CONTENT_POLICY_VIOLATION,
+    "VALIDATION_PASSED": ReasonCode.VALIDATION_PASSED,
+    None: ReasonCode.VALIDATION_PASSED,
+}
+
+# Map Thet's overall_status strings to Dale's TerminalSignalStatus
+_STATUS_MAP: dict[str, TerminalSignalStatus] = {
+    "PROCEED": TerminalSignalStatus.PROCEED,
+    "PROCEED_WITH_WARNINGS": TerminalSignalStatus.PROCEED_WITH_WARNINGS,
+    "PROCEED_WITH_EXCLUSIONS": TerminalSignalStatus.PROCEED_WITH_WARNINGS,
+    "TERMINATE": TerminalSignalStatus.TERMINATE,
+}
 
 
 class ValidatorService:
     """Core validation pipeline for the Validator Agent (#12).
 
+    Wraps Thet's 3-component pipeline with Dale's infrastructure layer.
     This service is stateless — all state is carried by the request/response
-    objects.  External dependencies are injected via port interfaces.
+    objects. External dependencies are injected via port interfaces.
+
+    The pipeline_fn parameter allows injecting a stub pipeline for testing
+    (returns canned ValidatorResult) or using Thet's real pipeline in production.
     """
 
     def __init__(
         self,
         *,
-        mrc: MrcPort,
-        ocr: OcrPort,
-        content_safety: ContentSafetyReasoner,
         knowledge_service: KnowledgeServicePort,
         decision_audit: DecisionAuditPort,
         event_publisher: EventPublisherPort,
         storage: StoragePort,
         tracing: TracingPort,
+        pipeline_fn: Callable | None = None,
     ) -> None:
-        self._mrc = mrc
-        self._ocr = ocr
-        self._content_safety = content_safety
         self._knowledge_service = knowledge_service
         self._decision_audit = decision_audit
         self._event_publisher = event_publisher
         self._storage = storage
         self._tracing = tracing
+        self._pipeline_fn = pipeline_fn
 
     async def validate(self, request: ValidationRequest) -> ValidationResponse:
         """Run the full validation pipeline for all files in the request."""
         file_results: list[FileResult] = []
-        reasoning_steps_all: list[dict] = []
-        step_counter = 0
-        self._last_model_used: str | None = None
-        self._confidence_scores: list[float] = []  # track per-step confidence
+        all_cleaned_text: list[str] = []
+        all_warnings: list[dict] = []
+        reasoning_steps: list[dict] = []
 
         for file_info in request.files:
-            signal, steps, step_counter = await self._validate_single_file(
+            result = await self._validate_single_file(
                 file_info=file_info,
                 workflow_id=request.workflow_id,
-                step_counter=step_counter,
             )
-            file_results.append(FileResult(
-                file_name=file_info.file_name,
-                terminal_signal=signal,
-            ))
-            reasoning_steps_all.extend(steps)
+            file_results.append(result)
+
+            if result.cleaned_text:
+                all_cleaned_text.append(result.cleaned_text)
+            all_warnings.extend(result.assessor_warnings)
+
+            # Build reasoning steps from pipeline result
+            reasoning_steps.append({
+                "file": file_info.file_name,
+                "status": result.terminal_signal.status.value,
+                "reason_code": result.terminal_signal.reason_code.value,
+                "terminated_at": result.terminated_at_component,
+                "time_ms": result.total_time_ms,
+            })
 
         overall_signal = self._compute_overall_signal(file_results)
 
+        # Forward cleaned text to Knowledge Service on PROCEED
+        if overall_signal.status != TerminalSignalStatus.TERMINATE:
+            combined_text = "\n\n".join(all_cleaned_text)
+            if combined_text.strip():
+                await self._knowledge_service.process_material(
+                    workflow_id=request.workflow_id,
+                    content_text=combined_text,
+                    source_type="ocr_extracted",
+                )
+
+        # Log audit decision (dual-sink)
         await self._log_audit_decision(
             request=request,
             overall_signal=overall_signal,
             file_results=file_results,
-            reasoning_steps=reasoning_steps_all,
+            reasoning_steps=reasoning_steps,
         )
 
         return ValidationResponse(
             workflow_id=request.workflow_id,
             terminal_signal=overall_signal,
             file_results=file_results,
+            cleaned_text="\n\n".join(all_cleaned_text),
+            assessor_warnings=all_warnings,
         )
 
     async def _validate_single_file(
@@ -117,192 +158,88 @@ class ValidatorService:
         *,
         file_info: FileInfo,
         workflow_id: str,
-        step_counter: int,
-    ) -> tuple[TerminalSignal, list[dict], int]:
-        """Validate a single file through the three-stage pipeline.
+    ) -> FileResult:
+        """Validate a single file through Thet's 3-component pipeline."""
+        # Download file bytes from storage
+        file_bytes = await self._storage.download_file(file_info.storage_path)
 
-        Returns (terminal_signal, reasoning_steps, updated_step_counter).
-        """
-        steps: list[dict] = []
+        # Run pipeline (Thet's real pipeline or injected stub)
+        if self._pipeline_fn is not None:
+            fn = self._pipeline_fn
+        else:
+            from validator_agent.pipeline import validate_file
+            fn = validate_file
 
-        # -- Stage 1: Download file from storage ----------------------------
-        step_counter += 1
-        await self._storage.download_file(file_info.storage_path)
-        steps.append({
-            "step": step_counter,
-            "action": f"Downloaded file {file_info.file_name} from {file_info.storage_path}",
-        })
-
-        # -- Stage 2: MRC blur/readability check ----------------------------
-        step_counter += 1
-        t0 = time.monotonic()
-        mrc_result = await self._mrc.predict(file_info.storage_path)
-        mrc_latency = (time.monotonic() - t0) * 1000
-        steps.append({
-            "step": step_counter,
-            "action": (
-                f"MRC blur check: readiness={mrc_result.readiness}, "
-                f"confidence={mrc_result.confidence}"
-            ),
-        })
-        self._confidence_scores.append(mrc_result.confidence)
-        await self._tracing.trace_tool_call(
-            workflow_id=workflow_id,
-            agent_name="validator-agent",
-            tool_name="mrc-predict",
-            input_params={"file_path": file_info.storage_path, "file_name": file_info.file_name},
-            output_summary={
-                "readiness": mrc_result.readiness,
-                "confidence": mrc_result.confidence,
-                "ml_model": "vertex-ai-mrc",
-                "prediction_type": "binary_classification",
-            },
-            latency_ms=mrc_latency,
+        pipeline_result = await asyncio.to_thread(
+            fn, file_bytes, file_info.file_name,
         )
 
-        if not mrc_result.readiness:
-            signal = TerminalSignal(
-                status=TerminalSignalStatus.TERMINATE,
-                reason_code=ReasonCode.BLURRY_UNREADABLE,
-                message=(
-                    f"Document {file_info.file_name} is blurry/unreadable "
-                    f"(confidence={mrc_result.confidence})"
-                ),
-            )
-            logger.info(
-                "validation_terminated",
-                file_name=file_info.file_name,
-                reason="blurry_unreadable",
-                confidence=mrc_result.confidence,
-            )
-            return signal, steps, step_counter
-
-        # -- Stage 3: OCR text extraction ------------------------------------
-        step_counter += 1
-        t0 = time.monotonic()
-        ocr_result = await self._ocr.extract_text(file_info.storage_path)
-        ocr_latency = (time.monotonic() - t0) * 1000
-        extracted_length = len(ocr_result.text.strip()) if ocr_result.text else 0
-        steps.append({
-            "step": step_counter,
-            "action": (
-                f"OCR extracted {extracted_length} characters "
-                f"(source_type: {ocr_result.source_type})"
-            ),
-        })
-        ocr_confidence = getattr(ocr_result, 'confidence', 1.0)
-        self._confidence_scores.append(ocr_confidence)
-        await self._tracing.trace_tool_call(
-            workflow_id=workflow_id,
-            agent_name="validator-agent",
-            tool_name="ocr-extract-text",
-            input_params={"file_path": file_info.storage_path, "file_name": file_info.file_name},
-            output_summary={
-                "chars_extracted": extracted_length,
-                "source_type": ocr_result.source_type,
-                "ocr_confidence": ocr_confidence,
-                "ml_model": "vertex-ai-vision",
-            },
-            latency_ms=ocr_latency,
+        # Map Thet's result to Dale's Terminal Signal
+        status = _STATUS_MAP.get(
+            pipeline_result.overall_status,
+            TerminalSignalStatus.TERMINATE,
         )
-
-        if extracted_length < _MIN_OCR_TEXT_LENGTH:
-            signal = TerminalSignal(
-                status=TerminalSignalStatus.TERMINATE,
-                reason_code=ReasonCode.OCR_FAILED,
-                message=(
-                    f"OCR extracted insufficient text from {file_info.file_name} "
-                    f"({extracted_length} chars, minimum {_MIN_OCR_TEXT_LENGTH})"
-                ),
-            )
-            logger.info(
-                "validation_terminated",
-                file_name=file_info.file_name,
-                reason="ocr_failed",
-                extracted_length=extracted_length,
-            )
-            return signal, steps, step_counter
-
-        # -- Stage 4: Content safety LLM reasoning --------------------------
-        step_counter += 1
-        safety_result = await self._content_safety.check(
-            ocr_result.text, file_info.file_name,
+        reason_code = _REASON_CODE_MAP.get(
+            pipeline_result.termination_reason,
+            ReasonCode.VALIDATION_PASSED if status != TerminalSignalStatus.TERMINATE
+            else ReasonCode.CONTENT_POLICY_VIOLATION,
         )
-        steps.append({
-            "step": step_counter,
-            "action": (
-                f"Content safety LLM: "
-                f"{'no harmful content detected' if safety_result.is_safe else safety_result.message}"
-            ),
-        })
-
-        # Capture model_used for the decision log
-        if safety_result.llm_metrics:
-            self._last_model_used = safety_result.llm_metrics.model_used
-
-        # Trace LLM call to Langfuse (Sink 2) if metrics available
-        if safety_result.llm_metrics:
-            await self._tracing.trace_llm_call(
-                workflow_id=workflow_id,
-                agent_name="validator-agent",
-                task_key="content_safety",
-                prompt_version=self._content_safety.prompt_version,
-                model_response=ModelResponse(
-                    content="",
-                    model_used=safety_result.llm_metrics.model_used,
-                    model_tier=safety_result.llm_metrics.model_tier,
-                    tokens_input=safety_result.llm_metrics.tokens_input,
-                    tokens_output=safety_result.llm_metrics.tokens_output,
-                    cost_usd=safety_result.llm_metrics.cost_usd,
-                    latency_ms=safety_result.llm_metrics.latency_ms,
-                ),
-            )
-
-        if not safety_result.is_safe:
-            signal = TerminalSignal(
-                status=TerminalSignalStatus.TERMINATE,
-                reason_code=safety_result.reason_code,
-                message=safety_result.message,
-            )
-            logger.info(
-                "validation_terminated",
-                file_name=file_info.file_name,
-                reason=safety_result.reason_code,
-            )
-            return signal, steps, step_counter
-
-        # -- Stage 5: All checks passed — forward to Knowledge Service ------
-        step_counter += 1
-        await self._knowledge_service.process_material(
-            workflow_id=workflow_id,
-            content_text=ocr_result.text,
-            source_type=ocr_result.source_type,
+        message = (
+            pipeline_result.termination_detail
+            or f"Document {file_info.file_name} validated: {pipeline_result.overall_status}"
         )
-        steps.append({
-            "step": step_counter,
-            "action": (
-                f"Forwarded extracted text to Knowledge Service "
-                f"(workflow_id={workflow_id}, source_type={ocr_result.source_type})"
-            ),
-        })
 
         signal = TerminalSignal(
-            status=TerminalSignalStatus.PROCEED,
-            reason_code=ReasonCode.VALIDATION_PASSED,
-            message=f"Document {file_info.file_name} passed all validation checks",
+            status=status,
+            reason_code=reason_code,
+            message=message[:500],
         )
+
+        # Trace the pipeline result
+        await self._tracing.trace_tool_call(
+            workflow_id=workflow_id,
+            agent_name="validator-agent",
+            tool_name="thet-pipeline",
+            input_params={
+                "file_name": file_info.file_name,
+                "file_type": file_info.file_type,
+            },
+            output_summary={
+                "overall_status": pipeline_result.overall_status,
+                "termination_reason": pipeline_result.termination_reason,
+                "terminated_at_component": pipeline_result.terminated_at_component,
+                "total_time_ms": pipeline_result.total_time_ms,
+                "mrc_status": pipeline_result.mrc.overall_status if pipeline_result.mrc else None,
+                "ocr_word_count": pipeline_result.ocr.total_word_count if pipeline_result.ocr else 0,
+                "safety_status": pipeline_result.content_safety.overall_status if pipeline_result.content_safety else None,
+            },
+            latency_ms=pipeline_result.total_time_ms,
+        )
+
         logger.info(
-            "validation_passed",
+            "validation_complete",
             file_name=file_info.file_name,
+            status=pipeline_result.overall_status,
+            reason=pipeline_result.termination_reason,
+            time_ms=pipeline_result.total_time_ms,
         )
-        return signal, steps, step_counter
+
+        return FileResult(
+            file_name=file_info.file_name,
+            terminal_signal=signal,
+            cleaned_text=pipeline_result.cleaned_text,
+            assessor_warnings=pipeline_result.assessor_warnings,
+            total_time_ms=pipeline_result.total_time_ms,
+            terminated_at_component=pipeline_result.terminated_at_component,
+        )
 
     @staticmethod
     def _compute_overall_signal(file_results: list[FileResult]) -> TerminalSignal:
         """Compute the overall Terminal Signal from per-file results.
 
-        If ANY file has TERMINATE, the overall result is TERMINATE (using the
-        first TERMINATE signal).  Otherwise PROCEED.
+        If ANY file has TERMINATE, the overall result is TERMINATE (first one).
+        If any file has PROCEED_WITH_WARNINGS, overall is PROCEED_WITH_WARNINGS.
+        Otherwise PROCEED.
         """
         if len(file_results) == 1:
             return file_results[0].terminal_signal
@@ -310,6 +247,17 @@ class ValidatorService:
         for result in file_results:
             if result.terminal_signal.status == TerminalSignalStatus.TERMINATE:
                 return result.terminal_signal
+
+        has_warnings = any(
+            result.terminal_signal.status == TerminalSignalStatus.PROCEED_WITH_WARNINGS
+            for result in file_results
+        )
+        if has_warnings:
+            return TerminalSignal(
+                status=TerminalSignalStatus.PROCEED_WITH_WARNINGS,
+                reason_code=ReasonCode.VALIDATION_PASSED,
+                message="All files validated with warnings",
+            )
 
         return TerminalSignal(
             status=TerminalSignalStatus.PROCEED,
@@ -325,18 +273,7 @@ class ValidatorService:
         file_results: list[FileResult],
         reasoning_steps: list[dict],
     ) -> None:
-        """Log the validation decision to both sinks using ONE canonical format.
-
-        Uses DecisionLogEntry (shared model) as the single format for:
-        - Sink 1: PostgreSQL (via DecisionAuditPort → Pub/Sub)
-        - Sink 2: Langfuse (via TracingPort → OTel SDK)
-        - UI: GET /decisions reads from the same agent_decision_log table
-
-        All three consumers see identical data. No format translation needed.
-        """
-        model_id = self._last_model_used or "unknown"
-
-        # Build the canonical DecisionLogEntry — ONE object, TWO sinks
+        """Log the validation decision to both sinks using ONE canonical format."""
         entry = DecisionLogEntry(
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
@@ -345,22 +282,27 @@ class ValidatorService:
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],
                 "phase": "Phase 3: Material Validation",
-                "tools_used": ["mrc-predict", "ocr-extract-text", "content-safety-llm"],
+                "tools_used": [
+                    "mrc-vertex-ai", "documentai-ocr", "page-classifier",
+                    "visual-understanding", "moderation-api",
+                    "content-analyzers-x4", "content-synthesizer",
+                ],
             },
             output_summary={
                 "terminal_signal": overall_signal.model_dump(),
                 "files_validated": len(file_results),
                 "files_passed": sum(
                     1 for f in file_results
-                    if f.terminal_signal.status == TerminalSignalStatus.PROCEED
+                    if f.terminal_signal.status != TerminalSignalStatus.TERMINATE
+                ),
+                "assessor_warnings_count": sum(
+                    len(f.assessor_warnings) for f in file_results
                 ),
             },
             reasoning_steps=reasoning_steps,
-            confidence_score=(
-                min(self._confidence_scores) if self._confidence_scores else None
-            ),
-            prompt_version=self._content_safety.prompt_version,
-            model_id=model_id,
+            confidence_score=None,
+            prompt_version="validator/thet-pipeline@v1",
+            model_id="gpt-4o",
             grounding_sources=[f.file_name for f in file_results],
         )
 
@@ -372,5 +314,5 @@ class ValidatorService:
             payload=entry.model_dump(),
         )
 
-        # Sink 2: Langfuse (via TracingPort → OTel SDK) — SAME entry
+        # Sink 2: Langfuse (via TracingPort → OTel SDK)
         await self._tracing.trace_decision(entry)

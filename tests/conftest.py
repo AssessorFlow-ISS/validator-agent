@@ -1,6 +1,9 @@
 """Shared test fixtures for the Validator Agent test suite.
 
 All fixtures use stub adapters — zero external dependencies required.
+The stub_pipeline_fn (from adapters/pipeline_stub.py) replaces Thet's
+real 3-component pipeline with a keyword-based stub that returns canned
+ValidatorResult objects.
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapte
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
 from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
+from validator_agent.adapters.pipeline_stub import stub_pipeline_fn
 from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
@@ -83,23 +87,18 @@ def content_safety_reasoner(
 
 @pytest.fixture
 def validator_service(
-    stub_mrc: StubMrcAdapter,
-    stub_ocr: StubOcrAdapter,
-    content_safety_reasoner: ContentSafetyReasoner,
     stub_knowledge_service: StubKnowledgeServiceAdapter,
     stub_decision_audit: StubDecisionAuditAdapter,
     stub_event_publisher: StubEventPublisherAdapter,
     stub_storage: StubStorageAdapter,
 ) -> ValidatorService:
     return ValidatorService(
-        mrc=stub_mrc,
-        ocr=stub_ocr,
-        content_safety=content_safety_reasoner,
         knowledge_service=stub_knowledge_service,
         decision_audit=stub_decision_audit,
         event_publisher=stub_event_publisher,
         storage=stub_storage,
         tracing=StubTracingAdapter(),
+        pipeline_fn=stub_pipeline_fn,
     )
 
 
