@@ -2,6 +2,8 @@
 
 Uses GPT-4o-mini to analyze OCR text coherence. Cheap (~$0.001/page).
 Uses Pydantic structured output to enforce strict TEXT/VISUAL response schema.
+
+Prompt template loaded from ``prompts/page_classifier.yaml`` (ADR-39).
 """
 
 from __future__ import annotations
@@ -12,25 +14,15 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from validator_agent.pipeline.llm_client import generate_structured
+from validator_agent.pipeline.prompt_loader import load_prompt
 
-CLASSIFICATION_PROMPT = """You are analyzing OCR-extracted text from a single page of a learning document.
+# ── Load prompt template (ADR-39) ────
 
-Your task: Determine if this page is purely text content, or if it likely contains visual elements
-(diagrams, charts, flowcharts, architecture diagrams, tables-as-images, formulas, illustrations)
-that the OCR could not fully capture.
+_CLASSIFIER_PROMPT, _CLASSIFIER_META = load_prompt("page_classifier")
+_MAX_INPUT_CHARS = int(_CLASSIFIER_META.get("max_input_chars", 2000))
 
-Signs of a VISUAL page:
-- Scattered short labels without connecting sentences (e.g. "User ID", "Policy engine", "Data plane")
-- Repeated structural words (e.g. "Subnet", "PEP", "Region:")
-- Arrow-like symbols or box-drawing characters
-- Text that reads like diagram labels rather than prose
-- Very short fragments that don't form coherent paragraphs
-- Figure/diagram captions (e.g. "Figure 2.1 - ZT Policy Signals")
-
-Signs of a TEXT page:
-- Coherent sentences forming paragraphs
-- Logical flow of ideas
-- Standard document structure (headings, bullet points with full sentences)"""
+# Public alias for backward compatibility
+CLASSIFICATION_PROMPT = _CLASSIFIER_PROMPT
 
 
 class PageType(str, Enum):
@@ -61,7 +53,7 @@ def classify_page(ocr_text: str) -> str:
         result, _resp = generate_structured(
             task_key="validator.page_classification",
             system_prompt=CLASSIFICATION_PROMPT,
-            user_prompt=ocr_text[:2000],
+            user_prompt=ocr_text[:_MAX_INPUT_CHARS],
             response_model=ClassificationResult,
             temperature=0,
             prompt_version="validator/page_classifier@v1",

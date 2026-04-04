@@ -4,6 +4,8 @@ Resolves disagreements using voting logic:
 - 3/4 or 4/4 agree → CONFIRMED
 - 2/4 agree → LIKELY REAL
 - 1/4 flags → Synthesizer verifies against original text
+
+Prompt template loaded from ``prompts/content_synthesizer.yaml`` (ADR-39).
 """
 
 from __future__ import annotations
@@ -16,37 +18,15 @@ from pydantic import BaseModel, Field
 from validator_agent.pipeline.content_analyzers import AllAnalyzerResults
 from validator_agent.pipeline.llm_client import generate_structured
 from validator_agent.pipeline.models import Finding, PageOcrResult
+from validator_agent.pipeline.prompt_loader import load_prompt
 
-SYNTHESIZER_SYSTEM = """You are a content safety synthesizer. You receive findings from 4 independent analyzers who reviewed the same document, plus the original document text.
+# ── Load prompt template (ADR-39) ────
 
-The 4 analyzers are:
-- Analyzer A: Child Safety Expert (hard gate — harmful content)
-- Analyzer B: Content Quality Expert (soft gate — misinformation)
-- Analyzer C: Legal Compliance Expert (soft gate — PII, copyright)
-- Analyzer D: Singapore Compliance Expert (hard gate — religious/political sensitivity)
+_SYNTHESIZER_PROMPT, _SYNTHESIZER_META = load_prompt("content_synthesizer")
+_MAX_INPUT_CHARS = int(_SYNTHESIZER_META.get("max_input_chars", 15000))
 
-Your job:
-1. Consolidate all findings — merge duplicates (same page + same issue across analyzers)
-2. For each unique finding, count how many analyzers flagged it:
-   - 3/4 or 4/4 agree → confidence: "confirmed"
-   - 2/4 agree → confidence: "likely"
-   - 1/4 flagged → CHECK the original text. If the finding is verifiable in the text, set confidence: "verified". If not verifiable, DISCARD it (likely hallucination)
-3. For NAME findings specifically — verify the context:
-   - Author names, public figures, academically cited experts → DISCARD (not PII)
-   - Names linked to grades, NRIC, medical/financial records → KEEP (private context PII)
-   - If an analyzer flagged an author name as PII, discard it with reason "Author attribution — public context"
-4. RECLASSIFY mistyped findings — analyzers may categorize findings under the wrong type:
-   - Religious bias ("X is the best religion") flagged as "misinformation" by Analyzer B → reclassify to "religious_political" (hard gate)
-   - Political advocacy flagged as "misinformation" by Analyzer B → reclassify to "religious_political" (hard gate)
-   - A finding's TYPE determines which gate it triggers (hard gate vs soft gate), so correct classification is critical
-5. For PII findings, include the "original" text exactly as it appears (needed for redaction)
-6. For PII findings, suggest "redacted_to" replacement:
-   - Names → [REDACTED_NAME]
-   - NRIC → [REDACTED_NRIC]
-   - Phone → [REDACTED_PHONE]
-   - Email → [REDACTED_EMAIL]
-   - Address → [REDACTED_ADDRESS]
-   - Financial → [REDACTED_FINANCIAL]"""
+# Public alias for backward compatibility
+SYNTHESIZER_SYSTEM = _SYNTHESIZER_PROMPT
 
 
 class SynthesizedFinding(BaseModel):
@@ -97,7 +77,7 @@ def synthesize_findings(
 {json.dumps(all_findings, indent=2)}
 
 Original document text:
-{original_text[:15000]}
+{original_text[:_MAX_INPUT_CHARS]}
 
 Consolidate the findings following the instructions."""
 
