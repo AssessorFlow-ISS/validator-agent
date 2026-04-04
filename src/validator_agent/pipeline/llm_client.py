@@ -12,6 +12,7 @@ until Model Broker supports image payloads.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 from dataclasses import dataclass, field
@@ -22,6 +23,22 @@ from af_shared.utils.schema_compat import clean_for_gemini
 
 MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "")
 _TIMEOUT = float(os.getenv("MODEL_BROKER_TIMEOUT", "60"))
+
+# Thread-safe workflow context — set by ValidatorService, read by generate()
+# contextvars propagate automatically to asyncio.to_thread() workers
+_workflow_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "workflow_id", default="unknown"
+)
+
+
+def set_workflow_context(workflow_id: str) -> None:
+    """Set the workflow_id for the current async context.
+
+    Called by ValidatorService before running the pipeline.
+    All LLM calls within the same context inherit this value
+    for Model Broker session/token budget tracking.
+    """
+    _workflow_id_var.set(workflow_id)
 
 
 @dataclass
@@ -72,7 +89,7 @@ def generate(
     If MODEL_BROKER_URL is set, routes through Model Broker.
     Otherwise falls back to direct OpenAI (for local dev without Broker).
     """
-    session = session_id or os.getenv("CURRENT_WORKFLOW_ID", "unknown")
+    session = session_id or _workflow_id_var.get()
 
     if MODEL_BROKER_URL:
         return _call_model_broker(
