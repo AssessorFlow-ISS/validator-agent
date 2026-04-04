@@ -483,8 +483,8 @@ class ValidatorService:
             if hard_gates:
                 steps.append({
                     "step": step_num,
-                    "component": "safety_decision",
-                    "action": f"Content safety decision: TERMINATE. Hard gate(s): {', '.join(hard_gates)}",
+                    "component": "content_fit_decision",
+                    "action": f"Content-Fit decision: TERMINATE. Hard gate(s): {', '.join(hard_gates)}",
                     "status": "TERMINATE",
                 })
                 return steps
@@ -494,8 +494,8 @@ class ValidatorService:
                 reason = safety.termination_reason or safety.error_message or "Content safety unavailable"
                 steps.append({
                     "step": step_num,
-                    "component": "safety_decision",
-                    "action": f"Content safety decision: TERMINATE. {reason}",
+                    "component": "content_fit_decision",
+                    "action": f"Content-Fit decision: TERMINATE. {reason}",
                     "status": "TERMINATE",
                 })
                 return steps
@@ -503,8 +503,8 @@ class ValidatorService:
             soft_desc = ". ".join(soft_items) if soft_items else "No issues detected"
             steps.append({
                 "step": step_num,
-                "component": "safety_decision",
-                "action": f"Content safety decision: {safety.overall_status}. {soft_desc}",
+                "component": "content_fit_decision",
+                "action": f"Content-Fit decision: {safety.overall_status}. {soft_desc}",
                 "status": safety.overall_status,
             })
 
