@@ -45,11 +45,11 @@ class KnowledgeServiceHttpAdapter(KnowledgeServicePort):
         content_text: str,
         source_type: str,
         assessor_id: str | None = None,
-    ) -> None:
+    ) -> list[str]:
         """POST extracted text to Knowledge Service for chunking/embedding.
 
-        Fire-and-forget: logs a warning on failure but never raises, so the
-        validation pipeline is not blocked by Knowledge Service issues.
+        Returns list of chunk IDs on success, empty list on failure.
+        Fire-and-forget: logs a warning on failure but never raises.
         """
         request_body: dict[str, str] = {
             "workflow_id": workflow_id,
@@ -74,12 +74,15 @@ class KnowledgeServiceHttpAdapter(KnowledgeServicePort):
             response.raise_for_status()
             data = response.json()
 
+            chunk_ids = data.get("chunk_ids", [])
             logger.info(
                 "knowledge_service_response",
                 workflow_id=workflow_id,
                 material_id=data.get("material_id"),
                 chunks_created=data.get("chunks_created"),
+                chunk_ids_count=len(chunk_ids),
             )
+            return chunk_ids
         except httpx.HTTPStatusError as exc:
             logger.warning(
                 "knowledge_service_http_error",
@@ -100,6 +103,7 @@ class KnowledgeServiceHttpAdapter(KnowledgeServicePort):
                 error=str(exc),
                 error_type=type(exc).__name__,
             )
+        return []
 
     async def close(self) -> None:
         """Gracefully close the underlying HTTP client."""

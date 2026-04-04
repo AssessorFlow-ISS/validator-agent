@@ -20,7 +20,7 @@ class KnowledgeServicePort(ABC):
         content_text: str,
         source_type: str,
         assessor_id: str | None = None,
-    ) -> None:
+    ) -> list[str]:
         """Send extracted text to the Knowledge Service for chunking/embedding.
 
         Args:
@@ -29,4 +29,8 @@ class KnowledgeServicePort(ABC):
             source_type: How the text was extracted (e.g. "ocr_extracted").
             assessor_id: CR-RAG-001 — assessor identity stored with chunks
                 for cumulative cross-assessment knowledge and isolation.
+
+        Returns:
+            List of chunk IDs created by the Knowledge Service.
+            Empty list on failure (fire-and-forget).
         """

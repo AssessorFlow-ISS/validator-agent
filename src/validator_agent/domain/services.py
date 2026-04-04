@@ -126,21 +126,23 @@ class ValidatorService:
         overall_signal = self._compute_overall_signal(file_results)
 
         # Forward cleaned text to Knowledge Service on PROCEED
+        chunk_ids: list[str] = []
         if overall_signal.status != TerminalSignalStatus.TERMINATE:
             combined_text = "\n\n".join(all_cleaned_text)
             if combined_text.strip():
-                await self._knowledge_service.process_material(
+                chunk_ids = await self._knowledge_service.process_material(
                     workflow_id=request.workflow_id,
                     content_text=combined_text,
                     source_type="ocr_extracted",
                 )
 
-        # Log audit decision (dual-sink)
+        # Log audit decision (dual-sink) — grounding_sources are real chunk IDs
         await self._log_audit_decision(
             request=request,
             overall_signal=overall_signal,
             file_results=file_results,
             reasoning_steps=reasoning_steps,
+            grounding_chunk_ids=chunk_ids,
         )
 
         return ValidationResponse(
@@ -541,6 +543,7 @@ class ValidatorService:
         overall_signal: TerminalSignal,
         file_results: list[FileResult],
         reasoning_steps: list[dict],
+        grounding_chunk_ids: list[str] | None = None,
     ) -> None:
         """Log the validation decision to both sinks using ONE canonical format."""
         entry = DecisionLogEntry(
@@ -572,7 +575,7 @@ class ValidatorService:
             confidence_score=None,
             prompt_version="validator/thet-pipeline@v1",
             model_id="gpt-4o",
-            grounding_sources=[f.file_name for f in file_results],
+            grounding_sources=grounding_chunk_ids or [f.file_name for f in file_results],
         )
 
         # Sink 1: PostgreSQL (via Pub/Sub → Decision Audit Service)
