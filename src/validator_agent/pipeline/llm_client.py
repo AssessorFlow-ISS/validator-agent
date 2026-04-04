@@ -22,6 +22,71 @@ MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "")
 _TIMEOUT = float(os.getenv("MODEL_BROKER_TIMEOUT", "60"))
 
 
+def _resolve_refs(schema: dict) -> dict:
+    """Inline $ref references and remove $defs from a JSON schema.
+
+    Gemini API rejects schemas with $defs. This function resolves all
+    $ref pointers inline and strips the $defs key.
+    """
+    defs = schema.pop("$defs", {})
+    if not defs:
+        return schema
+
+    import copy
+
+    def _resolve(node: dict) -> dict:
+        if "$ref" in node:
+            ref_path = node["$ref"]  # e.g. "#/$defs/PageType"
+            ref_name = ref_path.rsplit("/", 1)[-1]
+            if ref_name in defs:
+                resolved = copy.deepcopy(defs[ref_name])
+                resolved.pop("title", None)
+                return resolved
+            return node
+        result = {}
+        for key, value in node.items():
+            if isinstance(value, dict):
+                result[key] = _resolve(value)
+            elif isinstance(value, list):
+                result[key] = [_resolve(item) if isinstance(item, dict) else item for item in value]
+            else:
+                result[key] = value
+        return result
+
+    return _resolve(schema)
+
+
+# Keys that Gemini's structured output rejects
+_GEMINI_UNSUPPORTED = {"title", "$defs", "default", "additionalProperties"}
+
+
+def _strip_unsupported_keys(schema: dict) -> dict:
+    """Recursively remove keys Gemini doesn't support in response schemas."""
+    import copy
+    schema = copy.deepcopy(schema)
+
+    def _clean(node: dict) -> dict:
+        for key in list(node.keys()):
+            if key in _GEMINI_UNSUPPORTED:
+                del node[key]
+            elif isinstance(node[key], dict):
+                node[key] = _clean(node[key])
+            elif isinstance(node[key], list):
+                node[key] = [_clean(item) if isinstance(item, dict) else item for item in node[key]]
+
+        # Gemini doesn't support anyOf for nullable types.
+        # Convert anyOf: [{type: "string"}, {type: "null"}] → type: "string"
+        if "anyOf" in node and isinstance(node["anyOf"], list):
+            non_null = [t for t in node["anyOf"] if not (isinstance(t, dict) and t.get("type") == "null")]
+            if len(non_null) == 1:
+                node.pop("anyOf")
+                node.update(non_null[0])
+
+        return node
+
+    return _clean(schema)
+
+
 @dataclass
 class LlmResponse:
     """Unified response from either Model Broker or direct OpenAI."""
@@ -113,6 +178,9 @@ def generate_structured(
     Model Broker and to validate/parse the response.
     """
     schema = response_model.model_json_schema()
+    # Gemini rejects $defs and title fields in JSON schemas. Clean up.
+    schema = _resolve_refs(schema)
+    schema = _strip_unsupported_keys(schema)
 
     resp = generate(
         task_key=task_key,
