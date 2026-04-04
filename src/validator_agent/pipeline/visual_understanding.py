@@ -13,6 +13,9 @@ NOTE: This file uses OpenAI directly (not Model Broker) because the generator
 and evaluator send page IMAGES to GPT-4o. Model Broker does not yet support
 multimodal image payloads. Image moderation also stays direct (free API, not LLM).
 TODO: Route through Model Broker when multimodal support is added.
+
+Prompt templates loaded from ``prompts/visual_generator.yaml`` and
+``prompts/visual_evaluator.yaml`` (ADR-39).
 """
 
 from __future__ import annotations
@@ -24,56 +27,23 @@ from enum import Enum
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from validator_agent.pipeline.prompt_loader import load_prompt
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GENERATOR_MODEL = os.getenv("GENERATOR_MODEL", "gpt-4o")
 EVALUATOR_MODEL = os.getenv("EVALUATOR_MODEL", "gpt-4o")
-MAX_RETRIES = 2
 
-# ── Prompts ────
+# ── Load prompt templates (ADR-39) ────
 
-GENERATOR_SYSTEM_PROMPT = """You are analyzing a page from an educational learning document.
+_GENERATOR_PROMPT, _GENERATOR_META = load_prompt("visual_generator")
+_EVALUATOR_PROMPT, _EVALUATOR_META = load_prompt("visual_evaluator")
 
-The OCR system captured the following text from this page:
----
-{ocr_text}
----
+MAX_RETRIES = int(_GENERATOR_META.get("max_retries", 2))
 
-This page also contains visual elements that OCR could not fully interpret
-(diagrams, charts, images, formulas, tables, etc).
-
-Your task:
-1. Rewrite the COMPLETE page content in correct logical order
-2. For every visual element, describe what it shows, the relationships between components,
-   and how it connects to the surrounding text
-3. Place visual descriptions where they make the most sense contextually,
-   not necessarily where they physically appear on the page
-4. The output must be detailed enough for an educator to generate meaningful
-   assessment questions from it
-
-Do NOT repeat the OCR text word-for-word. Produce a coherent, well-structured
-rewrite that integrates text and visual content into a single flowing narrative."""
-
-GENERATOR_RETRY_PROMPT = """Your previous description was evaluated:
-
-{evaluation_feedback}
-
-Fix the specific issues listed above. Keep what already passed.
-Do NOT rewrite from scratch — patch only the gaps identified."""
-
-EVALUATOR_SYSTEM_PROMPT = """You are evaluating a description of a page from a learning document.
-You will receive the original page image and a text description of that page.
-
-Evaluate the description on exactly 3 dimensions:
-
-1. ACCURACY — Does the description match what is actually shown in the image?
-   Does it describe anything NOT present? Any hallucination?
-
-2. COMPLETENESS — Does the description capture ALL visual elements?
-   Any diagrams, arrows, relationships, labels, or components missing?
-
-3. EDUCATIONAL_VALUE — Is the description detailed enough for an educator
-   to generate meaningful assessment questions from it?
-   Does it explain relationships and causality, not just list components?"""
+# Public aliases for backward compatibility
+GENERATOR_SYSTEM_PROMPT = _GENERATOR_PROMPT
+GENERATOR_RETRY_PROMPT = _GENERATOR_META.get("retry_template", "").strip()
+EVALUATOR_SYSTEM_PROMPT = _EVALUATOR_PROMPT
 
 
 # ── Pydantic models for structured evaluator output ────
