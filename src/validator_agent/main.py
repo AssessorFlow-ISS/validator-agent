@@ -98,6 +98,10 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
         from validator_agent.adapters.storage_local import LocalStorageAdapter
         storage = LocalStorageAdapter()
         logger.info("using_local_storage_adapter", upload_dir=os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads"))
+    elif config.storage_adapter == "gcs":
+        from validator_agent.adapters.storage_gcs import GcsStorageAdapter
+        storage = GcsStorageAdapter()
+        logger.info("using_gcs_storage_adapter", bucket=os.environ.get("GCS_BUCKET_NAME", "(from URI)"))
     else:
         storage = StubStorageAdapter()
 
