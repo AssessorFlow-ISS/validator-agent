@@ -147,6 +147,16 @@ class ValidatorService:
                 "component": "kb_write",
                 "chunks_stored": len(chunk_ids),
             })
+            ingestion_summary = f"Forwarded {len(combined_text)} chars (PII-redacted) to Knowledge Service for chunking and embedding"
+            await self._write_progress_event(request.workflow_id, "assessorflow.validation.ingestion-complete", ingestion_summary)
+            await self._tracing.trace_tool_call(
+                workflow_id=request.workflow_id,
+                agent_name="validator-agent",
+                tool_name="knowledge-service-ingestion",
+                input_params={"content_length": len(combined_text)},
+                output_summary={"chunks_stored": len(chunk_ids), "chunk_ids": chunk_ids[:5]},
+                latency_ms=0,
+            )
 
         # Compute content fitness score from pipeline results
         content_fitness = self._compute_content_fitness(pipeline_results, file_results)
@@ -175,7 +185,11 @@ class ValidatorService:
         file_info: FileInfo,
         workflow_id: str,
     ) -> tuple[FileResult, object]:
-        """Validate a single file through Thet's 3-component pipeline.
+        """Validate a single file through the 3-component pipeline.
+
+        Each component runs sequentially. After each completes, a progress
+        event is written to workflow_events so the UI can render sub-cards
+        incrementally as the pipeline progresses.
 
         Returns (FileResult, raw_pipeline_result) — the raw result is
         needed for per-component reasoning_steps extraction.
@@ -184,22 +198,20 @@ class ValidatorService:
         file_bytes = await self._storage.download_file(file_info.storage_path)
 
         # Set workflow context for Model Broker session tracking (token budgets)
-        # Uses contextvars — thread-safe, auto-propagated to asyncio.to_thread()
         from validator_agent.pipeline.llm_client import set_workflow_context
         set_workflow_context(workflow_id)
 
-        # Run pipeline (Thet's real pipeline or injected stub)
+        # If a stub pipeline was injected (tests), run it as a single call
         if self._pipeline_fn is not None:
-            fn = self._pipeline_fn
+            pipeline_result = await asyncio.to_thread(
+                self._pipeline_fn, file_bytes, file_info.file_name,
+            )
         else:
-            from validator_agent.pipeline import validate_file
-            fn = validate_file
+            pipeline_result = await self._run_pipeline_with_progress(
+                file_bytes, file_info, workflow_id,
+            )
 
-        pipeline_result = await asyncio.to_thread(
-            fn, file_bytes, file_info.file_name,
-        )
-
-        # Map Thet's result to Dale's Terminal Signal
+        # Map pipeline result to Terminal Signal
         status = _STATUS_MAP.get(
             pipeline_result.overall_status,
             TerminalSignalStatus.TERMINATE,
@@ -240,6 +252,205 @@ class ValidatorService:
             terminated_at_component=pipeline_result.terminated_at_component,
         )
         return file_result, pipeline_result
+
+    async def _run_pipeline_with_progress(
+        self,
+        file_bytes: bytes,
+        file_info: FileInfo,
+        workflow_id: str,
+    ) -> object:
+        """Run each pipeline component individually, emitting progress events."""
+        from validator_agent.pipeline.models import ValidatorResult
+        from validator_agent.pipeline.mrc_client import check_readability
+        from validator_agent.pipeline.ocr_pipeline import extract_text
+        from validator_agent.pipeline.content_safety import check_content_safety
+
+        start_ms = time.time() * 1000
+
+        # ── Component 1: MRC ──
+        mrc_result = await asyncio.to_thread(check_readability, file_bytes, file_info.file_name)
+        mrc_summary = (
+            f"MRC readability check: {mrc_result.readable_pages}/{mrc_result.total_pages} pages readable, "
+            f"confidence {mrc_result.overall_confidence:.3f}, blurry_ratio {mrc_result.blurry_ratio:.0%}"
+        )
+        await self._write_progress_event(workflow_id, "assessorflow.validation.mrc-complete", mrc_summary)
+        await self._tracing.trace_tool_call(
+            workflow_id=workflow_id,
+            agent_name="validator-agent",
+            tool_name="mrc-vertex-ai",
+            input_params={"file_name": file_info.file_name},
+            output_summary={
+                "overall_status": mrc_result.overall_status,
+                "total_pages": mrc_result.total_pages,
+                "readable_pages": mrc_result.readable_pages,
+                "blurry_ratio": mrc_result.blurry_ratio,
+                "overall_confidence": mrc_result.overall_confidence,
+            },
+            latency_ms=mrc_result.inference_time_ms,
+        )
+
+        if mrc_result.overall_status == "TERMINATE":
+            return ValidatorResult(
+                file_name=file_info.file_name,
+                overall_status="TERMINATE",
+                termination_reason="BLURRY_UNREADABLE",
+                termination_detail=f"{mrc_result.unreadable_pages}/{mrc_result.total_pages} pages unreadable ({mrc_result.blurry_ratio:.0%} > 30% threshold)",
+                terminated_at_component="mrc",
+                mrc=mrc_result,
+                total_time_ms=round(time.time() * 1000 - start_ms, 2),
+            )
+
+        readable_pages = mrc_result.readable_page_numbers if mrc_result.readable_page_numbers else None
+
+        # ── Component 2: OCR ──
+        ocr_result = await asyncio.to_thread(extract_text, file_bytes, file_info.file_name, readable_pages)
+        text_pages = sum(1 for p in ocr_result.pages if p.classification == "TEXT")
+        visual_pages = sum(1 for p in ocr_result.pages if p.classification == "VISUAL")
+        ocr_summary = (
+            f"Document AI OCR: {ocr_result.total_word_count} words from {ocr_result.total_pages} pages "
+            f"(mode: {ocr_result.processing_mode}). "
+            f"{len(ocr_result.pages)} pages classified: {text_pages} TEXT, {visual_pages} VISUAL"
+        )
+        await self._write_progress_event(workflow_id, "assessorflow.validation.ocr-complete", ocr_summary)
+        await self._tracing.trace_tool_call(
+            workflow_id=workflow_id,
+            agent_name="validator-agent",
+            tool_name="documentai-ocr",
+            input_params={"file_name": file_info.file_name, "readable_pages": mrc_result.readable_page_numbers if mrc_result.readable_page_numbers else []},
+            output_summary={
+                "total_pages": ocr_result.total_pages,
+                "total_word_count": ocr_result.total_word_count,
+                "processing_mode": ocr_result.processing_mode,
+                "text_pages": text_pages,
+                "visual_pages": visual_pages,
+            },
+            latency_ms=ocr_result.ocr_time_ms,
+        )
+
+        if ocr_result.overall_status == "TERMINATE":
+            reason = "HARMFUL_IMAGE" if ocr_result.harmful_image_detected else "OCR_FAILED"
+            detail = ocr_result.harmful_image_detail or ocr_result.error_message or "OCR failed"
+            return ValidatorResult(
+                file_name=file_info.file_name,
+                overall_status="TERMINATE",
+                termination_reason=reason,
+                termination_detail=detail,
+                terminated_at_component="ocr",
+                mrc=mrc_result,
+                ocr=ocr_result,
+                total_time_ms=round(time.time() * 1000 - start_ms, 2),
+            )
+
+        # ── Component 3: Content Safety ──
+        safety_result = await asyncio.to_thread(check_content_safety, ocr_result.pages)
+        safety_parts = []
+        safety_parts.append(f"OpenAI Moderation pre-filter: {'FLAGGED' if safety_result.harmful_detected else 'PASSED'} (free)")
+        findings_count = (
+            len(safety_result.harmful_findings) + len(safety_result.pii_findings)
+            + len(safety_result.religious_political_findings) + len(safety_result.copyright_findings)
+            + len(safety_result.misinformation_findings)
+        )
+        if hasattr(safety_result, 'harmful_findings'):
+            safety_parts.append(
+                f"4 parallel analyzers: A({len(safety_result.harmful_findings)} harmful) "
+                f"B({len(safety_result.misinformation_findings)} misinfo) "
+                f"C({len(safety_result.pii_findings)} PII, {len(safety_result.copyright_findings)} copyright) "
+                f"D({len(safety_result.religious_political_findings)} political)"
+            )
+        safety_summary = ". ".join(safety_parts)
+        await self._write_progress_event(workflow_id, "assessorflow.validation.safety-complete", safety_summary)
+        await self._tracing.trace_tool_call(
+            workflow_id=workflow_id,
+            agent_name="validator-agent",
+            tool_name="content-safety-pipeline",
+            input_params={"page_count": ocr_result.total_pages},
+            output_summary={
+                "overall_status": safety_result.overall_status,
+                "harmful": len(safety_result.harmful_findings),
+                "pii": len(safety_result.pii_findings),
+                "religious_political": len(safety_result.religious_political_findings),
+                "copyright": len(safety_result.copyright_findings),
+                "misinformation": len(safety_result.misinformation_findings),
+            },
+            latency_ms=0,
+        )
+
+        if safety_result.overall_status == "TERMINATE":
+            return ValidatorResult(
+                file_name=file_info.file_name,
+                overall_status="TERMINATE",
+                termination_reason=safety_result.termination_reason,
+                termination_detail=safety_result.termination_detail,
+                terminated_at_component="content_safety",
+                mrc=mrc_result,
+                ocr=ocr_result,
+                content_safety=safety_result,
+                total_time_ms=round(time.time() * 1000 - start_ms, 2),
+            )
+
+        # ── All passed ──
+        assessor_warnings = []
+        if mrc_result.excluded_pages:
+            for page_num in mrc_result.excluded_pages:
+                assessor_warnings.append({
+                    "page": page_num,
+                    "type": "page_excluded",
+                    "detail": "Page excluded: blurry/unreadable (detected by MRC)",
+                })
+        assessor_warnings.extend(safety_result.assessor_warnings)
+
+        overall_status = safety_result.overall_status
+        if mrc_result.excluded_pages and overall_status == "PROCEED":
+            overall_status = "PROCEED_WITH_WARNINGS"
+
+        return ValidatorResult(
+            file_name=file_info.file_name,
+            overall_status=overall_status,
+            mrc=mrc_result,
+            ocr=ocr_result,
+            content_safety=safety_result,
+            cleaned_text=safety_result.cleaned_text,
+            assessor_warnings=assessor_warnings,
+            total_time_ms=round(time.time() * 1000 - start_ms, 2),
+        )
+
+    _STAGE_MAP = {
+        "assessorflow.validation.mrc-complete": 1,
+        "assessorflow.validation.ocr-complete": 2,
+        "assessorflow.validation.safety-complete": 3,
+        "assessorflow.validation.ingestion-complete": 4,
+    }
+
+    async def _write_progress_event(
+        self,
+        workflow_id: str,
+        event_type: str,
+        summary: str,
+    ) -> None:
+        """Write a progress event to workflow_events for live UI updates."""
+        import json as _json
+        import os
+        stage = self._STAGE_MAP.get(event_type, 0)
+        payload = _json.dumps({"pipeline_group": "content-assurance", "stage": stage})
+        try:
+            import asyncpg
+            host = os.getenv("ORCHESTRATOR_DB_HOST", "localhost")
+            port = os.getenv("ORCHESTRATOR_DB_PORT", "15432")
+            name = os.getenv("ORCHESTRATOR_DB_NAME", "af_orchestrator")
+            user = os.getenv("ORCHESTRATOR_DB_USER", "assessorflow")
+            password = os.getenv("ORCHESTRATOR_DB_PASSWORD", "dev_password")
+            dsn = f"postgresql://{user}:{password}@{host}:{port}/{name}"
+            conn = await asyncpg.connect(dsn)
+            try:
+                await conn.execute(
+                    """INSERT INTO workflow_events (workflow_id, event_type, source_agent, summary, payload)
+                       VALUES ($1, $2, 'validator-agent', $3, $4::jsonb)""",
+                    workflow_id, event_type, summary, payload,
+                )
+            finally:
+                await conn.close()
+        except Exception:
+            logger.warning("progress_event_write_failed", workflow_id=workflow_id, event_type=event_type, exc_info=True)
 
     async def _emit_component_traces(
         self,
