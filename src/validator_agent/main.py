@@ -145,24 +145,80 @@ def create_app() -> FastAPI:
 
             if isinstance(event_publisher, PubSubEventPublisherAdapter):
                 async def handle_trigger(payload: dict) -> None:
-                    """Process a validation trigger from Pub/Sub."""
-                    logger.info("validation_trigger_received", payload_keys=list(payload.keys()))
+                    """Process a validation trigger from Pub/Sub.
 
-                    files = payload.get("files", [])
-                    file_infos = [
-                        FileInfo(
-                            file_name=f.get("file_name", "unknown"),
-                            storage_path=f.get("storage_path", ""),
-                            file_type=f.get("file_type", "pdf"),
+                    The Orchestrator dispatches {workflow_id, assessment_id, phase, agent}.
+                    This handler fetches material metadata from the API Server
+                    (GET /api/v1/assessments/{assessment_id}/materials) and builds
+                    FileInfo objects for the validation pipeline.
+                    """
+                    import httpx
+
+                    workflow_id = payload.get("workflow_id", "unknown")
+                    assessment_id = payload.get("assessment_id", "unknown")
+                    logger.info(
+                        "validation_trigger_received",
+                        workflow_id=workflow_id,
+                        assessment_id=assessment_id,
+                        payload_keys=list(payload.keys()),
+                    )
+
+                    # Fetch materials from API Server — the Orchestrator trigger
+                    # does NOT include files; we must look them up by assessment_id.
+                    api_base = os.environ.get("API_SERVER_URL", "http://localhost:8001")
+                    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
+                    file_infos: list[FileInfo] = []
+                    try:
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            resp = await client.get(
+                                f"{api_base}/api/v1/assessments/{assessment_id}/materials",
+                            )
+                            resp.raise_for_status()
+                            materials = resp.json()
+                        logger.info("materials_fetched", assessment_id=assessment_id, count=len(materials))
+
+                        for m in materials:
+                            # The API Server stores files on disk as {id}_{file_name}
+                            # under UPLOAD_DIR. Build the local path so the
+                            # LocalStorageAdapter can read it directly.
+                            material_id = m.get("id", "")
+                            file_name = m.get("file_name", "unknown")
+                            local_path = os.path.join(upload_dir, f"{material_id}_{file_name}")
+                            file_infos.append(
+                                FileInfo(
+                                    file_name=file_name,
+                                    storage_path=local_path,
+                                    file_type=m.get("file_type", "pdf"),
+                                )
+                            )
+                    except Exception:
+                        logger.error(
+                            "materials_fetch_failed",
+                            assessment_id=assessment_id,
+                            exc_info=True,
                         )
-                        for f in files
-                    ] if files else [
-                        FileInfo(file_name="default.pdf", storage_path="gs://stub/default.pdf", file_type="pdf")
-                    ]
+
+                    if not file_infos:
+                        logger.error("no_materials_found", assessment_id=assessment_id)
+                        await event_publisher.publish(
+                            topic="assessorflow.validation.complete",
+                            payload={
+                                "workflow_id": workflow_id,
+                                "assessment_id": assessment_id,
+                                "terminal_signal": {
+                                    "status": "TERMINATE",
+                                    "reason_code": "NO_MATERIALS",
+                                    "message": "No materials found for assessment",
+                                },
+                                "file_results": [],
+                                "source_agent": "validator-agent",
+                            },
+                        )
+                        return
 
                     request = ValidationRequest(
-                        workflow_id=payload.get("workflow_id", "unknown"),
-                        assessment_id=payload.get("assessment_id", "unknown"),
+                        workflow_id=workflow_id,
+                        assessment_id=assessment_id,
                         validation_type=payload.get("validation_type", "material_validation"),
                         files=file_infos,
                     )
