@@ -100,6 +100,9 @@ class ValidatorService:
 
     async def validate(self, request: ValidationRequest) -> ValidationResponse:
         """Run the full validation pipeline for all files in the request."""
+        from datetime import datetime, timezone
+
+        pipeline_start = datetime.now(timezone.utc)
         file_results: list[FileResult] = []
         all_cleaned_text: list[str] = []
         all_warnings: list[dict] = []
@@ -119,9 +122,9 @@ class ValidatorService:
                 all_cleaned_text.append(result.cleaned_text)
             all_warnings.extend(result.assessor_warnings)
 
-        # Build detailed per-component reasoning steps
+        # Build detailed per-component reasoning steps with timestamps
         for fi, raw in pipeline_results:
-            reasoning_steps.extend(self._build_reasoning_steps(fi, raw))
+            reasoning_steps.extend(self._build_reasoning_steps(fi, raw, pipeline_start))
 
         overall_signal = self._compute_overall_signal(file_results)
 
@@ -136,6 +139,18 @@ class ValidatorService:
                     source_type="ocr_extracted",
                 )
 
+        # Add KB-write decision step with content fitness score
+        if chunk_ids:
+            reasoning_steps.append({
+                "step": len(reasoning_steps) + 1,
+                "action": f"Content fit: PROCEED — stored {len(chunk_ids)} chunks to Knowledge Service",
+                "component": "kb_write",
+                "chunks_stored": len(chunk_ids),
+            })
+
+        # Compute content fitness score from pipeline results
+        content_fitness = self._compute_content_fitness(pipeline_results, file_results)
+
         # Log audit decision (dual-sink) — grounding_sources are real chunk IDs
         await self._log_audit_decision(
             request=request,
@@ -143,6 +158,7 @@ class ValidatorService:
             file_results=file_results,
             reasoning_steps=reasoning_steps,
             grounding_chunk_ids=chunk_ids,
+            content_fitness=content_fitness,
         )
 
         return ValidationResponse(
@@ -332,13 +348,52 @@ class ValidatorService:
             )
 
     @staticmethod
-    def _build_reasoning_steps(file_info: FileInfo, result: object) -> list[dict]:
+    def _compute_content_fitness(
+        pipeline_results: list[tuple],
+        file_results: list,
+    ) -> float:
+        """Compute a 0.0-1.0 content fitness score from pipeline components.
+
+        Factors: MRC readability ratio, content safety warnings (penalty).
+        """
+        if not pipeline_results:
+            return 0.0
+
+        readable_ratio = 1.0
+        warning_penalty = 0.0
+
+        for _fi, raw in pipeline_results:
+            mrc = getattr(raw, "mrc", None)
+            safety = getattr(raw, "content_safety", None)
+
+            if mrc is not None and mrc.total_pages > 0:
+                readable_ratio = min(readable_ratio, mrc.readable_pages / mrc.total_pages)
+
+            if safety is not None:
+                warnings = getattr(safety, "assessor_warnings", [])
+                warning_penalty += len(warnings) * 0.05
+
+        return round(max(0.0, readable_ratio * (1.0 - min(warning_penalty, 0.5))), 4)
+
+    @staticmethod
+    def _build_reasoning_steps(file_info: FileInfo, result: object, pipeline_start: object = None) -> list[dict]:
         """Extract per-component reasoning steps from ValidatorResult.
 
         These populate the reasoning chain panel in the Agent Trace page.
+        Each step gets a computed timestamp based on cumulative latency from
+        pipeline_start so the trace timeline shows sequential progression.
         """
+        from datetime import datetime, timedelta, timezone
+
         steps: list[dict] = []
         step_num = 0
+        cumulative_ms = 0.0  # running total for timestamp computation
+
+        def _step_timestamp() -> str | None:
+            if pipeline_start is None:
+                return None
+            ts = pipeline_start + timedelta(milliseconds=cumulative_ms)
+            return ts.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts.microsecond // 1000:03d}Z"
 
         mrc = getattr(result, "mrc", None)
         ocr = getattr(result, "ocr", None)
@@ -349,47 +404,67 @@ class ValidatorService:
         if mrc is not None:
             step_num += 1
             excluded = f", excluded pages: {mrc.excluded_pages}" if mrc.excluded_pages else ""
-            steps.append({
+            ts = _step_timestamp()
+            cumulative_ms += mrc.inference_time_ms
+            step_data: dict = {
                 "step": step_num,
                 "component": "mrc",
+                "model_id": "vertex-ai/mrc-production",
                 "action": (
                     f"MRC readability check: {mrc.readable_pages}/{mrc.total_pages} pages readable, "
                     f"confidence {mrc.overall_confidence:.3f}, blurry_ratio {mrc.blurry_ratio:.0%}{excluded}"
                 ),
                 "status": mrc.overall_status,
                 "latency_ms": mrc.inference_time_ms,
-            })
+            }
+            if ts:
+                step_data["timestamp"] = ts
+            steps.append(step_data)
             if terminated_at == "mrc":
                 return steps
 
         # Step 2: OCR
         if ocr is not None:
             step_num += 1
-            steps.append({
+            ts = _step_timestamp()
+            cumulative_ms += ocr.ocr_time_ms
+            ocr_step: dict = {
                 "step": step_num,
                 "component": "ocr",
+                "model_id": "google/document-ai",
                 "action": (
                     f"Document AI OCR: {ocr.total_word_count} words from {ocr.total_pages} pages "
                     f"(mode: {ocr.processing_mode or 'unknown'})"
                 ),
                 "status": ocr.overall_status,
                 "latency_ms": ocr.ocr_time_ms,
-            })
+            }
+            if ts:
+                ocr_step["timestamp"] = ts
+            steps.append(ocr_step)
 
-            # Step 3: Page classification
+            # Step 3: Page classification (+ visual understanding time)
             if ocr.pages:
                 text_count = sum(1 for p in ocr.pages if p.classification == "TEXT")
                 visual_count = sum(1 for p in ocr.pages if p.classification == "VISUAL")
                 step_num += 1
-                steps.append({
+                # Page classification + visual understanding elapsed time
+                page_cls_ms = getattr(ocr, "page_classification_time_ms", 0) or 0
+                ts = _step_timestamp()
+                cumulative_ms += page_cls_ms
+                pg_step: dict = {
                     "step": step_num,
                     "component": "page_classification",
+                    "model_id": "gpt-4.1-mini",
                     "action": f"Page classification: {text_count} TEXT, {visual_count} VISUAL",
                     "pages": [
                         {"page": p.page_number, "class": p.classification, "source": p.source}
                         for p in ocr.pages
                     ],
-                })
+                }
+                if ts:
+                    pg_step["timestamp"] = ts
+                steps.append(pg_step)
 
             # Step 3b: Image moderation (if harmful)
             if ocr.harmful_image_detected:
@@ -412,6 +487,7 @@ class ValidatorService:
                 steps.append({
                     "step": step_num,
                     "component": "visual_understanding",
+                    "model_id": "gpt-4.1",
                     "action": f"Visual understanding: {ocr.visual_pages_processed} pages enhanced. {', '.join(visual_details)}",
                 })
 
@@ -421,20 +497,29 @@ class ValidatorService:
         # Step 4: Text moderation pre-filter
         if safety is not None:
             step_num += 1
+            ts = _step_timestamp()
             if safety.overall_status == "TERMINATE" and safety.termination_reason == "HARMFUL_CONTENT" and not safety.harmful_findings:
-                steps.append({
+                mod_step: dict = {
                     "step": step_num,
                     "component": "text_moderation",
+                    "model_id": "openai/moderation-api",
                     "action": f"OpenAI Moderation pre-filter: FLAGGED ({safety.termination_detail or 'harmful content'})",
                     "status": "TERMINATE",
-                })
+                }
+                if ts:
+                    mod_step["timestamp"] = ts
+                steps.append(mod_step)
                 return steps
-            steps.append({
+            mod_step = {
                 "step": step_num,
                 "component": "text_moderation",
+                "model_id": "openai/moderation-api",
                 "action": "OpenAI Moderation pre-filter: PASSED (free)",
                 "status": "PASSED",
-            })
+            }
+            if ts:
+                mod_step["timestamp"] = ts
+            steps.append(mod_step)
 
             # Step 5: Content analyzers
             findings = {
@@ -447,6 +532,7 @@ class ValidatorService:
             steps.append({
                 "step": step_num,
                 "component": "content_analyzers",
+                "model_id": "gpt-4.1",
                 "action": (
                     f"4 parallel analyzers: "
                     f"A({findings['A']} harmful) B({findings['B']} misinfo) "
@@ -461,6 +547,7 @@ class ValidatorService:
             steps.append({
                 "step": step_num,
                 "component": "synthesizer",
+                "model_id": "gpt-4.1",
                 "action": f"Synthesizer: {total} finding(s) confirmed after voting",
             })
 
@@ -560,6 +647,7 @@ class ValidatorService:
         file_results: list[FileResult],
         reasoning_steps: list[dict],
         grounding_chunk_ids: list[str] | None = None,
+        content_fitness: float = 0.0,
     ) -> None:
         """Log the validation decision to both sinks using ONE canonical format."""
         entry = DecisionLogEntry(
@@ -586,11 +674,12 @@ class ValidatorService:
                 "assessor_warnings_count": sum(
                     len(f.assessor_warnings) for f in file_results
                 ),
+                "content_fitness": content_fitness,
             },
             reasoning_steps=reasoning_steps,
-            confidence_score=None,
+            confidence_score=content_fitness,
             prompt_version="validator/thet-pipeline@v1",
-            model_id="gpt-4o",
+            model_id="vertex-ai-mrc + document-ai-ocr + gpt-4.1",
             grounding_sources=grounding_chunk_ids or [f.file_name for f in file_results],
         )
 
