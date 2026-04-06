@@ -9,12 +9,15 @@ Applies the 30% blurry threshold to decide PROCEED, PROCEED_WITH_EXCLUSIONS, or 
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 
 import requests
 
 from validator_agent.pipeline.models import MrcResult
+
+logger = logging.getLogger(__name__)
 
 MRC_ENDPOINT = os.getenv("MRC_ENDPOINT", "https://asia-southeast1-aiplatform.googleapis.com/v1/projects/aflow-491809/locations/asia-southeast1/endpoints/mrc-endpoint-production:rawPredict")
 BLUR_THRESHOLD = float(os.getenv("MRC_BLUR_THRESHOLD", "0.30"))
@@ -103,7 +106,8 @@ def check_readability(file_bytes: bytes, file_name: str) -> MrcResult:
             data = _call_vertex_ai(file_bytes, file_name)
         else:
             data = _call_local(file_bytes, file_name)
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as exc:
+        logger.error("MRC connection error for %s: %s", file_name, exc)
         return MrcResult(
             overall_readiness=False,
             overall_confidence=0.0,
@@ -116,7 +120,8 @@ def check_readability(file_bytes: bytes, file_name: str) -> MrcResult:
             overall_status="TERMINATE",
             blurry_ratio=0.0,
         )
-    except Exception:
+    except Exception as exc:
+        logger.error("MRC call failed for %s: %s", file_name, exc, exc_info=True)
         return MrcResult(
             overall_readiness=False,
             overall_confidence=0.0,
