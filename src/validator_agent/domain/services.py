@@ -122,9 +122,55 @@ class ValidatorService:
                 all_cleaned_text.append(result.cleaned_text)
             all_warnings.extend(result.assessor_warnings)
 
-        # Build detailed per-component reasoning steps with timestamps
+        # Build detailed per-component reasoning steps with timestamps.
+        # For text files (.md), inject component-tagged steps so each
+        # sub-card in the trace page shows contextual Decision Insight.
         for fi, raw in pipeline_results:
-            reasoning_steps.extend(self._build_reasoning_steps(fi, raw, pipeline_start))
+            is_text = (
+                fi.file_type in ("text/markdown", "text/plain")
+                or fi.file_name.endswith((".md", ".txt"))
+            )
+            if is_text:
+                word_count = len((raw.cleaned_text or "").split())
+                reasoning_steps.extend([
+                    {"step": len(reasoning_steps) + 1, "component": "mrc",
+                     "action": f"MRC readability: SKIPPED (text file, {word_count} words). No blur detection needed for .md files."},
+                    {"step": len(reasoning_steps) + 2, "component": "ocr",
+                     "action": f"Text extraction: SKIPPED (already text, {word_count} words). Read directly from {fi.file_name}."},
+                    {"step": len(reasoning_steps) + 3, "component": "content_fit_decision",
+                     "action": f"Content-Fit: {raw.overall_status}. {fi.file_name} ({word_count} words) from web research."},
+                ])
+            else:
+                reasoning_steps.extend(self._build_reasoning_steps(fi, raw, pipeline_start))
+
+        # Write consolidated progress events for Phase 5 text files (one set
+        # for ALL files, not per-file). This gives the trace page 3 clean
+        # sub-cards instead of N x 3.
+        if request.validation_type == "web_research_validation":
+            text_files = [fi for fi, _ in pipeline_results
+                          if fi.file_type in ("text/markdown", "text/plain") or fi.file_name.endswith((".md", ".txt"))]
+            total_words = sum(len((raw.cleaned_text or "").split()) for _, raw in pipeline_results)
+            _PG = "web-content-assurance"
+            await self._write_progress_event(
+                request.workflow_id,
+                "assessorflow.validation.mrc-complete",
+                f"MRC readability: SKIPPED ({len(text_files)} text files, {total_words} total words). No blur detection needed for web research .md files.",
+                pipeline_group=_PG,
+            )
+            await self._write_progress_event(
+                request.workflow_id,
+                "assessorflow.validation.ocr-complete",
+                f"Text extraction: SKIPPED ({len(text_files)} files already text, {total_words} words). Read directly from .md files.",
+                pipeline_group=_PG,
+            )
+            safety_statuses = [r.overall_status for _, r in pipeline_results]
+            all_proceed = all(s in ("PROCEED", "PROCEED_WITH_WARNINGS") for s in safety_statuses)
+            await self._write_progress_event(
+                request.workflow_id,
+                "assessorflow.validation.safety-complete",
+                f"Content safety: {'PASSED' if all_proceed else 'ISSUES FOUND'} across {len(text_files)} web research files. {total_words} words screened.",
+                pipeline_group=_PG,
+            )
 
         overall_signal = self._compute_overall_signal(file_results)
 
@@ -133,11 +179,20 @@ class ValidatorService:
         if overall_signal.status != TerminalSignalStatus.TERMINATE:
             combined_text = "\n\n".join(all_cleaned_text)
             if combined_text.strip():
+                # Use source_type based on validation_type:
+                # Phase 3 materials → "ocr_extracted" (from PDF OCR)
+                # Phase 5 web research → "web_research" (already text)
+                source_type = (
+                    "web_research"
+                    if request.validation_type == "web_research_validation"
+                    else "ocr_extracted"
+                )
                 chunk_ids = await self._knowledge_service.process_material(
                     workflow_id=request.workflow_id,
                     content_text=combined_text,
-                    source_type="ocr_extracted",
+                    source_type=source_type,
                     assessment_id=request.assessment_id,
+                    source="web_research" if request.validation_type == "web_research_validation" else "upload",
                 )
 
         # Add KB-write decision step with content fitness score
@@ -149,7 +204,8 @@ class ValidatorService:
                 "chunks_stored": len(chunk_ids),
             })
             ingestion_summary = f"Forwarded {len(combined_text)} chars (PII-redacted) to Knowledge Service for chunking and embedding"
-            await self._write_progress_event(request.workflow_id, "assessorflow.validation.ingestion-complete", ingestion_summary)
+            ingestion_pg = "web-content-assurance" if request.validation_type == "web_research_validation" else "content-assurance"
+            await self._write_progress_event(request.workflow_id, "assessorflow.validation.ingestion-complete", ingestion_summary, pipeline_group=ingestion_pg)
             await self._tracing.trace_tool_call(
                 workflow_id=request.workflow_id,
                 agent_name="validator-agent",
@@ -198,6 +254,18 @@ class ValidatorService:
         # Download file bytes from storage
         file_bytes = await self._storage.download_file(file_info.storage_path)
 
+        # Text files (.md, .txt) from Web Research Agent: skip MRC/OCR,
+        # run content safety only, return text content directly.
+        is_text_file = (
+            file_info.file_type in ("text/markdown", "text/plain")
+            or file_info.file_name.endswith((".md", ".txt"))
+        )
+        if is_text_file:
+            pipeline_result = await self._validate_text_file(
+                file_bytes, file_info, workflow_id,
+            )
+            return self._map_pipeline_to_result(file_info, pipeline_result, workflow_id), pipeline_result
+
         # Set workflow context for Model Broker session tracking (token budgets)
         from validator_agent.pipeline.llm_client import set_workflow_context
         set_workflow_context(workflow_id)
@@ -212,7 +280,20 @@ class ValidatorService:
                 file_bytes, file_info, workflow_id,
             )
 
-        # Map pipeline result to Terminal Signal
+        result_tuple = self._map_pipeline_to_result(file_info, pipeline_result, workflow_id)
+
+        # Emit per-component traces to Langfuse (Sink 2)
+        await self._emit_component_traces(workflow_id, file_info, pipeline_result)
+
+        return result_tuple, pipeline_result
+
+    def _map_pipeline_to_result(
+        self,
+        file_info: FileInfo,
+        pipeline_result: object,
+        workflow_id: str,
+    ) -> FileResult:
+        """Map a pipeline result to a FileResult with Terminal Signal."""
         status = _STATUS_MAP.get(
             pipeline_result.overall_status,
             TerminalSignalStatus.TERMINATE,
@@ -233,9 +314,6 @@ class ValidatorService:
             message=message[:500],
         )
 
-        # Emit per-component traces to Langfuse (Sink 2)
-        await self._emit_component_traces(workflow_id, file_info, pipeline_result)
-
         logger.info(
             "validation_complete",
             file_name=file_info.file_name,
@@ -244,7 +322,7 @@ class ValidatorService:
             time_ms=pipeline_result.total_time_ms,
         )
 
-        file_result = FileResult(
+        return FileResult(
             file_name=file_info.file_name,
             terminal_signal=signal,
             cleaned_text=pipeline_result.cleaned_text,
@@ -252,7 +330,80 @@ class ValidatorService:
             total_time_ms=pipeline_result.total_time_ms,
             terminated_at_component=pipeline_result.terminated_at_component,
         )
-        return file_result, pipeline_result
+
+    async def _validate_text_file(
+        self,
+        file_bytes: bytes,
+        file_info: FileInfo,
+        workflow_id: str,
+    ) -> object:
+        """Validate a text file (.md, .txt) — skip MRC/OCR, content safety only.
+
+        Web Research Agent produces .md files that are already text. Running
+        MRC (blur detection) or OCR on text is meaningless. We read the text
+        directly and run content safety.
+        """
+        from validator_agent.pipeline.models import ValidatorResult
+        from validator_agent.pipeline.content_safety import check_content_safety
+        from validator_agent.pipeline.llm_client import set_workflow_context
+
+        set_workflow_context(workflow_id)
+        start_ms = time.time() * 1000
+
+        # Read text directly
+        text = file_bytes.decode("utf-8", errors="replace")
+        word_count = len(text.split())
+
+        logger.info(
+            "text_file_validation",
+            file_name=file_info.file_name,
+            word_count=word_count,
+        )
+
+        # No per-file progress events for text files — consolidated events
+        # are written once by validate() after all files are processed.
+        # This prevents 5x MRC, 5x OCR, 5x Safety sub-cards in the trace page.
+
+        # Run content safety on the text — wrap in PageOcrResult (content_safety
+        # expects list[PageOcrResult], not raw text string)
+        try:
+            from validator_agent.pipeline.models import PageOcrResult
+            pages = [PageOcrResult(
+                page_number=1,
+                extracted_text=text,
+                word_count=word_count,
+                confidence=1.0,
+                classification="TEXT",
+                source="web_research",
+            )]
+            safety_result = await asyncio.to_thread(
+                check_content_safety, pages,
+            )
+
+            elapsed = time.time() * 1000 - start_ms
+            return ValidatorResult(
+                file_name=file_info.file_name,
+                overall_status=safety_result.overall_status,
+                termination_reason=safety_result.termination_reason,
+                termination_detail=safety_result.termination_detail,
+                cleaned_text=text,
+                assessor_warnings=safety_result.assessor_warnings,
+                total_time_ms=elapsed,
+                terminated_at_component=None,
+            )
+        except Exception:
+            logger.warning("text_file_safety_check_failed", exc_info=True)
+            elapsed = time.time() * 1000 - start_ms
+            return ValidatorResult(
+                file_name=file_info.file_name,
+                overall_status="PROCEED",
+                termination_reason=None,
+                termination_detail=f"Text file validated: {word_count} words (safety check skipped)",
+                cleaned_text=text,
+                assessor_warnings=[],
+                total_time_ms=elapsed,
+                terminated_at_component=None,
+            )
 
     async def _run_pipeline_with_progress(
         self,
@@ -477,12 +628,14 @@ class ValidatorService:
         workflow_id: str,
         event_type: str,
         summary: str,
+        *,
+        pipeline_group: str = "content-assurance",
     ) -> None:
         """Write a progress event to workflow_events for live UI updates."""
         import json as _json
         import os
         stage = self._STAGE_MAP.get(event_type, 0)
-        payload = _json.dumps({"pipeline_group": "content-assurance", "stage": stage})
+        payload = _json.dumps({"pipeline_group": pipeline_group, "stage": stage})
         try:
             import asyncpg
             host = os.getenv("ORCHESTRATOR_DB_HOST", "localhost")

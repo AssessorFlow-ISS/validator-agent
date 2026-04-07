@@ -21,15 +21,17 @@ class KnowledgeServicePort(ABC):
         source_type: str,
         assessment_id: str | None = None,
         assessor_id: str | None = None,
+        source: str = "upload",
     ) -> list[str]:
         """Send extracted text to the Knowledge Service for chunking/embedding.
 
         Args:
             workflow_id: The workflow identifier.
-            content_text: Pre-extracted text content from OCR.
-            source_type: How the text was extracted (e.g. "ocr_extracted").
+            content_text: Pre-extracted text content from OCR or web research.
+            source_type: How the text was extracted (e.g. "ocr_extracted", "web_research").
             assessment_id: Assessment scoping for cross-context isolation.
             assessor_id: CR-RAG-001 — assessor identity for cumulative knowledge.
+            source: Material source ("upload" for Phase 3, "web_research" for Phase 5).
 
         Returns:
             List of chunk IDs created by the Knowledge Service.

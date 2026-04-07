@@ -165,25 +165,36 @@ def create_app() -> FastAPI:
 
                     # Fetch materials from API Server — the Orchestrator trigger
                     # does NOT include files; we must look them up by assessment_id.
+                    # For Phase 5 (web_research_validation), filter by source=web_research
+                    # to only validate new web research content, not re-process Phase 3 materials.
                     api_base = os.environ.get("API_SERVER_URL", "http://localhost:8001")
                     upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
+                    validation_type = payload.get("validation_type", "material_validation")
                     file_infos: list[FileInfo] = []
                     try:
+                        materials_url = f"{api_base}/api/v1/assessments/{assessment_id}/materials"
+                        if validation_type == "web_research_validation":
+                            materials_url += "?source=web_research"
                         async with httpx.AsyncClient(timeout=10.0) as client:
-                            resp = await client.get(
-                                f"{api_base}/api/v1/assessments/{assessment_id}/materials",
-                            )
+                            resp = await client.get(materials_url)
                             resp.raise_for_status()
                             materials = resp.json()
-                        logger.info("materials_fetched", assessment_id=assessment_id, count=len(materials))
+                        logger.info("materials_fetched", assessment_id=assessment_id, count=len(materials), validation_type=validation_type)
 
                         for m in materials:
-                            # The API Server stores files on disk as {id}_{file_name}
-                            # under UPLOAD_DIR. Build the local path so the
-                            # LocalStorageAdapter can read it directly.
                             material_id = m.get("id", "")
                             file_name = m.get("file_name", "unknown")
-                            local_path = os.path.join(upload_dir, f"{material_id}_{file_name}")
+                            source = m.get("source", "upload")
+                            storage_path = m.get("storage_path", "")
+
+                            # Web research .md files are stored at {UPLOAD_DIR}/materials/{workflow_id}/{file_name}
+                            # by the Web Research Agent's LocalStorageAdapter.
+                            if source == "web_research" and storage_path:
+                                local_path = os.path.join(upload_dir, storage_path)
+                            else:
+                                # Original uploads: API Server stores as {id}_{file_name}
+                                local_path = os.path.join(upload_dir, f"{material_id}_{file_name}")
+
                             file_infos.append(
                                 FileInfo(
                                     file_name=file_name,
