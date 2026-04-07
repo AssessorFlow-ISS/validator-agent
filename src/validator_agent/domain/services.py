@@ -303,14 +303,15 @@ class ValidatorService:
 
         readable_pages = mrc_result.readable_page_numbers if mrc_result.readable_page_numbers else None
 
-        # ── Component 2: OCR ──
+        # ── Component 2: OCR (3 passes: Document AI → Classification → Visual) ──
         ocr_result = await asyncio.to_thread(extract_text, file_bytes, file_info.file_name, readable_pages)
         text_pages = sum(1 for p in ocr_result.pages if p.classification == "TEXT")
         visual_pages = sum(1 for p in ocr_result.pages if p.classification == "VISUAL")
+
+        # Sub-card 2a: Document AI OCR
         ocr_summary = (
             f"Document AI OCR: {ocr_result.total_word_count} words from {ocr_result.total_pages} pages "
-            f"(mode: {ocr_result.processing_mode}). "
-            f"{len(ocr_result.pages)} pages classified: {text_pages} TEXT, {visual_pages} VISUAL"
+            f"(mode: {ocr_result.processing_mode})"
         )
         await self._write_progress_event(workflow_id, "assessorflow.validation.ocr-complete", ocr_summary)
         await self._tracing.trace_tool_call(
@@ -322,11 +323,52 @@ class ValidatorService:
                 "total_pages": ocr_result.total_pages,
                 "total_word_count": ocr_result.total_word_count,
                 "processing_mode": ocr_result.processing_mode,
-                "text_pages": text_pages,
-                "visual_pages": visual_pages,
             },
             latency_ms=ocr_result.ocr_time_ms,
         )
+
+        # Sub-card 2b: Page Classification
+        classify_summary = f"Page classification: {text_pages} TEXT, {visual_pages} VISUAL out of {ocr_result.total_pages} pages"
+        await self._write_progress_event(workflow_id, "assessorflow.validation.classification-complete", classify_summary)
+        await self._tracing.trace_tool_call(
+            workflow_id=workflow_id,
+            agent_name="validator-agent",
+            tool_name="page-classifier",
+            input_params={"total_pages": ocr_result.total_pages},
+            output_summary={
+                "text_pages": text_pages,
+                "visual_pages": visual_pages,
+                "page_sources": {p.page_number: p.classification for p in ocr_result.pages},
+            },
+        )
+
+        # Sub-card 2c: Visual Understanding (only if VISUAL pages exist)
+        if visual_pages > 0:
+            llm_pages = sum(1 for p in ocr_result.pages if p.source == "llm")
+            fallback_pages = sum(1 for p in ocr_result.pages if p.source == "ocr_fallback")
+            visual_summary = (
+                f"Visual understanding: {llm_pages}/{visual_pages} pages enhanced via LLM"
+            )
+            if fallback_pages > 0:
+                visual_summary += f", {fallback_pages} fell back to OCR text"
+            if ocr_result.visual_pages_processed > 0:
+                visual_summary += f". {ocr_result.visual_pages_processed} pages produced richer descriptions"
+            await self._write_progress_event(workflow_id, "assessorflow.validation.visual-complete", visual_summary)
+            await self._tracing.trace_tool_call(
+                workflow_id=workflow_id,
+                agent_name="validator-agent",
+                tool_name="visual-understanding",
+                input_params={"visual_pages": visual_pages},
+                output_summary={
+                    "llm_enhanced": llm_pages,
+                    "ocr_fallback": fallback_pages,
+                    "visual_pages_processed": ocr_result.visual_pages_processed,
+                    "page_details": {
+                        p.page_number: {"source": p.source, "attempts": p.visual_attempts}
+                        for p in ocr_result.pages if p.classification == "VISUAL"
+                    },
+                },
+            )
 
         if ocr_result.overall_status == "TERMINATE":
             reason = "HARMFUL_IMAGE" if ocr_result.harmful_image_detected else "OCR_FAILED"
@@ -418,8 +460,10 @@ class ValidatorService:
     _STAGE_MAP = {
         "assessorflow.validation.mrc-complete": 1,
         "assessorflow.validation.ocr-complete": 2,
-        "assessorflow.validation.safety-complete": 3,
-        "assessorflow.validation.ingestion-complete": 4,
+        "assessorflow.validation.classification-complete": 3,
+        "assessorflow.validation.visual-complete": 4,
+        "assessorflow.validation.safety-complete": 5,
+        "assessorflow.validation.ingestion-complete": 6,
     }
 
     async def _write_progress_event(
