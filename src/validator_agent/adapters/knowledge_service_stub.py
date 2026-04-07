@@ -35,6 +35,7 @@ class StubKnowledgeServiceAdapter(KnowledgeServicePort):
         source_type: str,
         assessment_id: str | None = None,
         assessor_id: str | None = None,
+        source: str = "upload",
     ) -> list[str]:
         """Record the call and return stub chunk IDs."""
         self.calls.append(ProcessMaterialCall(
