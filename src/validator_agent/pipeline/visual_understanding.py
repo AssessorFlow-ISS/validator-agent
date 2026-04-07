@@ -431,7 +431,7 @@ def process_visual_batch(
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            max_tokens=2000 * len(batch_items),
+            max_tokens=min(2000 * len(batch_items), 16000),
             temperature=0.2,
         )
         raw_text = response.choices[0].message.content.strip()
@@ -529,7 +529,7 @@ def evaluate_visual_batch(
                 {"role": "user", "content": user_content},
             ],
             response_format={"type": "json_object"},
-            max_tokens=1500 * len(page_numbers),
+            max_tokens=min(1500 * len(page_numbers), 12000),
             temperature=0,
         )
         raw_text = response.choices[0].message.content.strip()
@@ -546,9 +546,9 @@ def evaluate_visual_batch(
                 pn = int(key)
                 if pn in page_numbers:
                     results[pn] = EvaluationResult(**value)
-            except (ValueError, Exception) as e:
+            except (ValueError, TypeError) as e:
                 logger.warning("Failed to parse evaluation for page %s: %s", key, e)
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, TypeError) as e:
         logger.warning("Batch evaluator returned invalid JSON: %s", e)
 
     return results
