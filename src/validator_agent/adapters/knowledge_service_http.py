@@ -44,6 +44,7 @@ class KnowledgeServiceHttpAdapter(KnowledgeServicePort):
         workflow_id: str,
         content_text: str,
         source_type: str,
+        assessment_id: str | None = None,
         assessor_id: str | None = None,
     ) -> list[str]:
         """POST extracted text to Knowledge Service for chunking/embedding.
@@ -56,6 +57,8 @@ class KnowledgeServiceHttpAdapter(KnowledgeServicePort):
             "content_text": content_text,
             "source_type": source_type,
         }
+        if assessment_id is not None:
+            request_body["assessment_id"] = assessment_id
         if assessor_id is not None:
             request_body["assessor_id"] = assessor_id
 

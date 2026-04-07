@@ -17,6 +17,7 @@ class ProcessMaterialCall:
     workflow_id: str
     content_text: str
     source_type: str
+    assessment_id: str | None = None
     assessor_id: str | None = None
 
 
@@ -32,6 +33,7 @@ class StubKnowledgeServiceAdapter(KnowledgeServicePort):
         workflow_id: str,
         content_text: str,
         source_type: str,
+        assessment_id: str | None = None,
         assessor_id: str | None = None,
     ) -> list[str]:
         """Record the call and return stub chunk IDs."""
@@ -39,6 +41,7 @@ class StubKnowledgeServiceAdapter(KnowledgeServicePort):
             workflow_id=workflow_id,
             content_text=content_text,
             source_type=source_type,
+            assessment_id=assessment_id,
             assessor_id=assessor_id,
         ))
         return [f"stub-chunk-{i}" for i in range(1, 4)]

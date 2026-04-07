@@ -137,6 +137,7 @@ class ValidatorService:
                     workflow_id=request.workflow_id,
                     content_text=combined_text,
                     source_type="ocr_extracted",
+                    assessment_id=request.assessment_id,
                 )
 
         # Add KB-write decision step with content fitness score
