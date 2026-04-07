@@ -6,16 +6,21 @@ Only processes readable pages. Blurry pages are excluded.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from validator_agent.pipeline.documentai_client import extract_with_documentai_bytes
 from validator_agent.pipeline.models import OcrResult, PageOcrResult
 from validator_agent.pipeline.page_classifier import classify_page
 from validator_agent.pipeline.pdf_to_images import pdf_pages_to_images
-from validator_agent.pipeline.visual_understanding import process_visual_page
+from validator_agent.pipeline.visual_understanding import process_visual_batch, process_visual_page
+
+logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "accessorflow")
+VISUAL_BATCH_SIZE = int(os.getenv("VISUAL_BATCH_SIZE", "3"))
 LOCATION = os.getenv("GCP_LOCATION", "asia-southeast1")
 PROCESSOR_ID = os.getenv("DOCUMENTAI_PROCESSOR_ID", "dabf82e23a09dead")
 ENABLE_VISUAL = os.getenv("ENABLE_VISUAL", "true").lower() == "true"
@@ -101,37 +106,74 @@ def extract_text(
 def _enhance_visual_pages(result: OcrResult, page_image_map: dict[int, bytes]) -> None:
     """Classify pages and enhance visual pages with GPT-4o.
 
+    Uses hybrid batch + parallel processing (AF-184):
+    - Phase 1: Classify all pages (sequential, cheap GPT-4o-mini)
+    - Phase 2: Chunk VISUAL pages into batches of VISUAL_BATCH_SIZE
+    - Phase 3: Run all batches in parallel via ThreadPoolExecutor
+    - Phase 4: Map results back to original page objects
+
     Includes image moderation — if harmful imagery detected, terminates early.
     """
-    visual_pages_processed = 0
-
+    # Phase 1: Classify ALL pages (sequential — cheap GPT-4o-mini calls)
+    visual_pages = []
     for page in result.pages:
-        # Pass 2: Classify
         classification = classify_page(page.extracted_text)
         page.classification = classification
 
-        if classification != "VISUAL":
+        if classification == "VISUAL" and page.page_number in page_image_map:
+            visual_pages.append(page)
+        else:
+            page.source = "ocr"
+
+    if not visual_pages:
+        return
+
+    # Phase 2: Chunk visual pages into batches
+    batches: list[list[tuple[int, bytes, str]]] = []
+    for i in range(0, len(visual_pages), VISUAL_BATCH_SIZE):
+        batch_pages = visual_pages[i : i + VISUAL_BATCH_SIZE]
+        batch_items = [
+            (p.page_number, page_image_map[p.page_number], p.extracted_text)
+            for p in batch_pages
+        ]
+        batches.append(batch_items)
+
+    # Phase 3: Run all batches in parallel
+    all_results: dict[int, object] = {}
+
+    with ThreadPoolExecutor(max_workers=min(len(batches), 5)) as executor:
+        future_to_batch = {
+            executor.submit(process_visual_batch, batch): batch
+            for batch in batches
+        }
+        for future in as_completed(future_to_batch):
+            batch = future_to_batch[future]
+            try:
+                batch_results = future.result()
+                all_results.update(batch_results)
+            except Exception as e:
+                # Batch failed — fall back to single-page processing
+                logger.warning("Batch failed: %s — falling back to single-page", e)
+                for pn, img_bytes, ocr_text in batch:
+                    all_results[pn] = process_visual_page(
+                        page_image_bytes=img_bytes,
+                        ocr_text=ocr_text,
+                    )
+
+    # Phase 4: Map results back to pages
+    visual_pages_processed = 0
+    for page in visual_pages:
+        vr = all_results.get(page.page_number)
+        if vr is None:
             page.source = "ocr"
             continue
-
-        # Get image for this page
-        page_image = page_image_map.get(page.page_number)
-        if not page_image:
-            page.source = "ocr"
-            continue
-
-        # Pass 3: Visual understanding (includes image moderation)
-        visual_result = process_visual_page(
-            page_image_bytes=page_image,
-            ocr_text=page.extracted_text,
-        )
 
         # Check harmful image detection
-        if visual_result.harmful_image_detected:
+        if vr.harmful_image_detected:
             result.harmful_image_detected = True
             result.harmful_image_detail = (
-                visual_result.image_moderation.detail
-                if visual_result.image_moderation
+                vr.image_moderation.detail
+                if vr.image_moderation
                 else "Harmful image detected"
             )
             result.harmful_image_page = page.page_number
@@ -146,13 +188,13 @@ def _enhance_visual_pages(result: OcrResult, page_image_map: dict[int, bytes]) -
             result.total_word_count = sum(p.word_count for p in result.pages)
             return
 
-        page.source = visual_result.source
-        page.visual_evaluation = visual_result.evaluations
-        page.visual_attempts = visual_result.attempts
+        page.source = vr.source
+        page.visual_evaluation = vr.evaluations
+        page.visual_attempts = vr.attempts
 
-        if visual_result.source == "llm":
-            page.extracted_text = visual_result.text
-            page.word_count = len(visual_result.text.split())
+        if vr.source == "llm":
+            page.extracted_text = vr.text
+            page.word_count = len(vr.text.split())
             visual_pages_processed += 1
 
     result.total_word_count = sum(p.word_count for p in result.pages)

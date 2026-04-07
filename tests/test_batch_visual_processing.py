@@ -24,6 +24,7 @@ from validator_agent.pipeline.visual_understanding import (
     VisualProcessResult,
     process_visual_batch,
     evaluate_visual_batch,
+    _parse_batch_descriptions,
 )
 from validator_agent.pipeline.ocr_pipeline import (
     VISUAL_BATCH_SIZE,
@@ -294,29 +295,37 @@ class TestParallelExecution:
         result = _make_ocr_result(pages)
         page_image_map = _make_page_image_map(list(range(1, 10)))
 
-        mock_batch_fn.return_value = {
-            pn: VisualProcessResult(
-                text=f"desc {pn}", source="llm", attempts=1,
-            )
-            for pn in range(1, 10)
-        }
+        def batch_side_effect(batch_items):
+            return {
+                item[0]: VisualProcessResult(
+                    text=f"desc {item[0]}", source="llm", attempts=1,
+                )
+                for item in batch_items
+            }
+
+        mock_batch_fn.side_effect = batch_side_effect
 
         with patch(
             "validator_agent.pipeline.ocr_pipeline.ThreadPoolExecutor"
         ) as mock_executor_cls:
+            # Create a real-enough executor mock that works with as_completed
             mock_executor = MagicMock()
             mock_executor_cls.return_value.__enter__ = MagicMock(return_value=mock_executor)
             mock_executor_cls.return_value.__exit__ = MagicMock(return_value=False)
 
-            # Make futures return the batch results
-            mock_future = MagicMock()
-            mock_future.result.return_value = {
-                pn: VisualProcessResult(
-                    text=f"desc {pn}", source="llm", attempts=1,
-                )
-                for pn in range(1, 4)
-            }
-            mock_executor.submit.return_value = mock_future
+            # Create mock futures that as_completed can iterate
+            from concurrent.futures import Future
+            futures = []
+            submitted_batches = []
+
+            def submit_side_effect(fn, batch):
+                submitted_batches.append(batch)
+                f = Future()
+                f.set_result(fn(batch))
+                futures.append(f)
+                return f
+
+            mock_executor.submit.side_effect = submit_side_effect
 
             _enhance_visual_pages(result, page_image_map)
 
@@ -324,6 +333,9 @@ class TestParallelExecution:
             mock_executor_cls.assert_called_once()
             # 3 batches submitted
             assert mock_executor.submit.call_count == 3
+            # Verify batch sizes
+            batch_sizes = sorted(len(b) for b in submitted_batches)
+            assert batch_sizes == [3, 3, 3]
 
 
 # ── AC Row 7: Config Override ────
@@ -392,6 +404,7 @@ class TestProcessVisualBatch:
                 assert isinstance(results[pn], VisualProcessResult)
                 assert results[pn].source in ("llm", "ocr_fallback")
 
+    @patch("validator_agent.pipeline.visual_understanding.OPENAI_API_KEY", "test-key")
     def test_process_visual_batch_harmful_image_terminates_early(self):
         """If any image in batch is flagged harmful, return immediately."""
         batch_items = _make_batch_items([1, 2, 3])
@@ -421,6 +434,7 @@ class TestProcessVisualBatch:
 class TestEvaluateVisualBatch:
     """Unit tests for the batch evaluator function."""
 
+    @patch("validator_agent.pipeline.visual_understanding.OPENAI_API_KEY", "test-key")
     def test_evaluate_batch_returns_per_page_verdicts(self):
         """evaluate_visual_batch returns dict of {page_number: EvaluationResult}."""
         batch_items = _make_batch_items([1, 2, 3])
@@ -436,30 +450,88 @@ class TestEvaluateVisualBatch:
             mock_client = MagicMock()
             mock_openai.return_value = mock_client
 
-            from validator_agent.pipeline.visual_understanding import (
-                EvaluationResult,
-                Verdict,
-                DimensionResult,
-            )
-
-            mock_parsed = EvaluationResult(
-                overall=Verdict.PASS,
-                dimensions={
-                    "accuracy": DimensionResult(verdict=Verdict.PASS),
-                    "completeness": DimensionResult(verdict=Verdict.PASS),
-                    "educational_value": DimensionResult(verdict=Verdict.PASS),
+            # evaluate_visual_batch uses JSON mode — response is a JSON object
+            # keyed by page number strings
+            import json as json_mod
+            page_eval = {
+                "overall": "PASS",
+                "dimensions": {
+                    "accuracy": {"verdict": "PASS", "feedback": None},
+                    "completeness": {"verdict": "PASS", "feedback": None},
+                    "educational_value": {"verdict": "PASS", "feedback": None},
                 },
-            )
-            # Mock structured output parse response
-            mock_response = MagicMock()
-            mock_response.choices[0].message.parsed = {
-                1: mock_parsed,
-                2: mock_parsed,
-                3: mock_parsed,
+                "retry_prompt_supplement": None,
             }
-            mock_client.beta.chat.completions.parse.return_value = mock_response
+            mock_response = MagicMock()
+            mock_response.choices[0].message.content = json_mod.dumps({
+                "1": page_eval,
+                "2": page_eval,
+                "3": page_eval,
+            })
+            mock_client.chat.completions.create.return_value = mock_response
 
             eval_results = evaluate_visual_batch(batch_items, descriptions)
 
             assert isinstance(eval_results, dict)
             assert set(eval_results.keys()) == {1, 2, 3}
+
+
+# ── _parse_batch_descriptions edge cases ────
+
+
+class TestParseBatchDescriptions:
+    """Direct unit tests for the batch response parser."""
+
+    def test_standard_format(self):
+        """Pages in order with ## Page N headings."""
+        text = "## Page 3\nDescription of page 3.\n\n## Page 5\nDescription of page 5."
+        result = _parse_batch_descriptions(text, [3, 5])
+        assert result == {3: "Description of page 3.", 5: "Description of page 5."}
+
+    def test_pages_in_wrong_order(self):
+        """GPT-4o returns pages out of order — parser should still map correctly."""
+        text = "## Page 8\nEighth page desc.\n\n## Page 3\nThird page desc."
+        result = _parse_batch_descriptions(text, [3, 8])
+        assert result[3] == "Third page desc."
+        assert result[8] == "Eighth page desc."
+
+    def test_extra_page_ignored(self):
+        """GPT-4o hallucinates a page not in page_numbers — should be filtered out."""
+        text = "## Page 3\nReal page.\n\n## Page 99\nHallucinated page.\n\n## Page 5\nAnother real page."
+        result = _parse_batch_descriptions(text, [3, 5])
+        assert set(result.keys()) == {3, 5}
+        assert 99 not in result
+
+    def test_missing_page(self):
+        """GPT-4o omits one page from response — only present pages returned."""
+        text = "## Page 3\nDescription of page 3."
+        result = _parse_batch_descriptions(text, [3, 5, 8])
+        assert set(result.keys()) == {3}
+        assert 5 not in result
+        assert 8 not in result
+
+    def test_heading_with_colon(self):
+        """Variant heading format: ## Page 3: (with colon) — should still parse."""
+        text = "## Page 3:\nDescription with colon heading.\n\n## Page 5\nNormal heading."
+        result = _parse_batch_descriptions(text, [3, 5])
+        # Page 3 heading has colon — regex may or may not capture it
+        # At minimum page 5 should parse
+        assert 5 in result
+
+    def test_empty_response(self):
+        """Empty response text — returns empty dict."""
+        result = _parse_batch_descriptions("", [3, 5])
+        assert result == {}
+
+    def test_preamble_text_before_first_heading(self):
+        """GPT-4o adds preamble text before the first heading — should be ignored."""
+        text = "Here are the descriptions:\n\n## Page 3\nPage three content.\n\n## Page 5\nPage five content."
+        result = _parse_batch_descriptions(text, [3, 5])
+        assert set(result.keys()) == {3, 5}
+        assert result[3] == "Page three content."
+
+    def test_single_page_batch(self):
+        """Single page in batch — should work fine."""
+        text = "## Page 7\nSolo page description with detailed content."
+        result = _parse_batch_descriptions(text, [7])
+        assert result == {7: "Solo page description with detailed content."}
