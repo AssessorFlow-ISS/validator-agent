@@ -866,6 +866,7 @@ class ValidatorService:
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
             decision_type="content_validation",
+            assessor_id=request.assessor_id,
             input_summary={
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],

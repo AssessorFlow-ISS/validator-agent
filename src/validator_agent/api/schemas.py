@@ -23,6 +23,7 @@ class ValidationRequest(BaseModel):
 
     workflow_id: str = Field(..., description="Workflow identifier")
     assessment_id: str = Field(..., description="Assessment identifier")
+    assessor_id: str | None = Field(default=None, description="Assessor identity for trace filtering")
     validation_type: str = Field(
         default="material_validation",
         description="Type of validation (material_validation, web_research_validation)",
