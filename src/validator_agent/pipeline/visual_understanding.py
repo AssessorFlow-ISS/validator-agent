@@ -21,13 +21,18 @@ Prompt templates loaded from ``prompts/visual_generator.yaml`` and
 from __future__ import annotations
 
 import base64
+import json
+import logging
 import os
+import re
 from enum import Enum
 
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from validator_agent.pipeline.prompt_loader import load_prompt
+
+logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GENERATOR_MODEL = os.getenv("GENERATOR_MODEL", "gpt-4o")
@@ -319,3 +324,231 @@ def process_visual_page(
         evaluations=evaluations,
         error="Evaluator did not pass after max retries",
     )
+
+
+# ── Batch processing (AF-184) ────
+
+
+_BATCH_GENERATOR_PREAMBLE = (
+    "You are analyzing MULTIPLE pages from an educational learning document.\n"
+    "Each page is provided as a separate image. For EACH page, produce a complete "
+    "description following the instructions below.\n\n"
+    "CRITICAL: Label each page description with a markdown heading: ## Page {N}\n"
+    "where {N} is the page number provided. Output descriptions in page order.\n\n"
+)
+
+_BATCH_EVALUATOR_PREAMBLE = (
+    "You are evaluating descriptions of MULTIPLE pages from a learning document.\n"
+    "Each page image is provided alongside its generated description.\n\n"
+    "For EACH page, evaluate on 3 dimensions: accuracy, completeness, educational_value.\n"
+    "Label each evaluation with: ## Page {N}\n"
+    "Then provide a JSON block for that page's evaluation.\n\n"
+)
+
+
+def _parse_batch_descriptions(response_text: str, page_numbers: list[int]) -> dict[int, str]:
+    """Parse a batch GPT-4o response into per-page descriptions.
+
+    Expects the response to contain ``## Page N`` headings.
+    Returns a dict of {page_number: description_text}.
+    """
+    results: dict[int, str] = {}
+
+    # Split on ## Page N headings
+    pattern = r"##\s*Page\s*(\d+)"
+    parts = re.split(pattern, response_text)
+
+    # parts alternates: [preamble, page_num, content, page_num, content, ...]
+    i = 1
+    while i < len(parts) - 1:
+        try:
+            pn = int(parts[i])
+            content = parts[i + 1].strip()
+            if pn in page_numbers:
+                results[pn] = content
+        except (ValueError, IndexError):
+            pass
+        i += 2
+
+    return results
+
+
+def process_visual_batch(
+    batch_items: list[tuple[int, bytes, str]],
+) -> dict[int, VisualProcessResult]:
+    """Process multiple visual pages in a single GPT-4o call.
+
+    Args:
+        batch_items: List of (page_number, page_image_bytes, ocr_text) tuples.
+
+    Returns:
+        Dict of {page_number: VisualProcessResult}.
+    """
+    if not OPENAI_API_KEY:
+        return {
+            pn: VisualProcessResult(text=ocr, source="ocr_fallback", error="No OPENAI_API_KEY set")
+            for pn, _, ocr in batch_items
+        }
+
+    page_numbers = [item[0] for item in batch_items]
+    results: dict[int, VisualProcessResult] = {}
+
+    # Phase 1: Moderation check on ALL images (cheap, sequential)
+    for pn, img_bytes, ocr_text in batch_items:
+        moderation = check_image_moderation(img_bytes)
+        if moderation.flagged:
+            results[pn] = VisualProcessResult(
+                text=ocr_text,
+                source="ocr_fallback",
+                image_moderation=moderation,
+                harmful_image_detected=True,
+            )
+            # Return immediately — harmful image terminates the batch
+            return results
+
+    # Phase 2: Single GPT-4o call for all pages in batch
+    ocr_context = "\n\n".join(
+        f"--- Page {pn} OCR ---\n{ocr[:3000]}"
+        for pn, _, ocr in batch_items
+    )
+    system_prompt = _BATCH_GENERATOR_PREAMBLE + GENERATOR_SYSTEM_PROMPT.format(ocr_text=ocr_context)
+
+    user_content: list[dict] = [{"type": "text", "text": "Analyze these pages:"}]
+    for pn, img_bytes, _ in batch_items:
+        user_content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
+                "detail": "high",
+            },
+        })
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        response = client.chat.completions.create(
+            model=GENERATOR_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            max_tokens=2000 * len(batch_items),
+            temperature=0.2,
+        )
+        raw_text = response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.warning("Batch generator failed: %s — falling back to single-page", e)
+        return {
+            pn: VisualProcessResult(text=ocr, source="ocr_fallback", attempts=1, error=f"Batch generator failed: {e}")
+            for pn, _, ocr in batch_items
+        }
+
+    # Phase 3: Parse per-page descriptions
+    descriptions = _parse_batch_descriptions(raw_text, page_numbers)
+
+    # Phase 4: Evaluate all descriptions in one call
+    eval_results = evaluate_visual_batch(batch_items, descriptions)
+
+    # Phase 5: Build results — retry failed pages via single-page fallback
+    for pn, img_bytes, ocr_text in batch_items:
+        if pn not in descriptions:
+            # Parser couldn't extract this page — fall back to single-page
+            logger.warning("Batch parse missing page %d — falling back to single-page", pn)
+            results[pn] = process_visual_page(img_bytes, ocr_text)
+            continue
+
+        page_eval = eval_results.get(pn)
+        if page_eval and page_eval.overall == Verdict.PASS:
+            results[pn] = VisualProcessResult(
+                text=descriptions[pn],
+                source="llm",
+                attempts=1,
+                evaluations=[{"attempt": 1, **page_eval.model_dump()}],
+            )
+        else:
+            # Evaluation failed or missing — retry via single-page
+            logger.info("Page %d failed batch evaluation — retrying single-page", pn)
+            results[pn] = process_visual_page(img_bytes, ocr_text)
+
+    return results
+
+
+def evaluate_visual_batch(
+    batch_items: list[tuple[int, bytes, str]],
+    descriptions: dict[int, str],
+) -> dict[int, EvaluationResult]:
+    """Evaluate multiple page descriptions in a single GPT-4o call.
+
+    Args:
+        batch_items: List of (page_number, page_image_bytes, ocr_text) tuples.
+        descriptions: Dict of {page_number: generated_description}.
+
+    Returns:
+        Dict of {page_number: EvaluationResult}.
+    """
+    if not OPENAI_API_KEY:
+        return {}
+
+    page_numbers = [item[0] for item in batch_items if item[0] in descriptions]
+    if not page_numbers:
+        return {}
+
+    # Build evaluation prompt with all descriptions
+    desc_text = "\n\n".join(
+        f"## Page {pn}\n{descriptions[pn]}"
+        for pn in page_numbers
+    )
+
+    user_content: list[dict] = [
+        {"type": "text", "text": f"Descriptions to evaluate:\n\n{desc_text}"},
+    ]
+    for pn, img_bytes, _ in batch_items:
+        if pn in descriptions:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
+                    "detail": "high",
+                },
+            })
+
+    eval_system = (
+        _BATCH_EVALUATOR_PREAMBLE + EVALUATOR_SYSTEM_PROMPT + "\n\n"
+        "Output a single JSON object with page numbers as keys. Example:\n"
+        '{"3": {"overall": "PASS", "dimensions": {"accuracy": {"verdict": "PASS", "feedback": null}, '
+        '"completeness": {"verdict": "PASS", "feedback": null}, '
+        '"educational_value": {"verdict": "PASS", "feedback": null}}, '
+        '"retry_prompt_supplement": null}, "5": {...}}'
+    )
+
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        response = client.chat.completions.create(
+            model=EVALUATOR_MODEL,
+            messages=[
+                {"role": "system", "content": eval_system},
+                {"role": "user", "content": user_content},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1500 * len(page_numbers),
+            temperature=0,
+        )
+        raw_text = response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.warning("Batch evaluator failed: %s", e)
+        return {}
+
+    # Parse JSON response — keyed by page number string
+    results: dict[int, EvaluationResult] = {}
+    try:
+        parsed = json.loads(raw_text)
+        for key, value in parsed.items():
+            try:
+                pn = int(key)
+                if pn in page_numbers:
+                    results[pn] = EvaluationResult(**value)
+            except (ValueError, Exception) as e:
+                logger.warning("Failed to parse evaluation for page %s: %s", key, e)
+    except json.JSONDecodeError as e:
+        logger.warning("Batch evaluator returned invalid JSON: %s", e)
+
+    return results
