@@ -540,7 +540,11 @@ def process_visual_batch(
         if pn not in descriptions:
             # Parser couldn't extract this page — fall back to single-page
             logger.warning("Batch parse missing page %d — falling back to single-page", pn)
-            results[pn] = process_visual_page(img_bytes, ocr_text, workflow_id=workflow_id)
+            try:
+                results[pn] = process_visual_page(img_bytes, ocr_text, workflow_id=workflow_id)
+            except Exception as e:
+                logger.warning("Single-page fallback failed for page %d: %s", pn, e)
+                results[pn] = VisualProcessResult(text=ocr_text, source="ocr_fallback", error=str(e))
             continue
 
         page_eval = eval_results.get(pn)
@@ -554,7 +558,11 @@ def process_visual_batch(
         else:
             # Evaluation failed or missing — retry via single-page
             logger.info("Page %d failed batch evaluation — retrying single-page", pn)
-            results[pn] = process_visual_page(img_bytes, ocr_text, workflow_id=workflow_id)
+            try:
+                results[pn] = process_visual_page(img_bytes, ocr_text, workflow_id=workflow_id)
+            except Exception as e:
+                logger.warning("Single-page fallback failed for page %d: %s", pn, e)
+                results[pn] = VisualProcessResult(text=ocr_text, source="ocr_fallback", error=str(e))
 
     return results
 
@@ -626,14 +634,30 @@ def evaluate_visual_batch(
         return {}
 
     # Parse JSON response — keyed by page number string
+    # gpt-4.1-mini may return a flat format (dimensions at top level) instead
+    # of the expected {overall, dimensions, retry_prompt_supplement} wrapper.
     results: dict[int, EvaluationResult] = {}
     try:
         parsed = json.loads(raw_text)
         for key, value in parsed.items():
             try:
                 pn = int(key)
-                if pn in page_numbers:
+                if pn not in page_numbers:
+                    continue
+                # Try expected format first
+                if "overall" in value and "dimensions" in value:
                     results[pn] = EvaluationResult(**value)
+                else:
+                    # Flat format: dimension dicts at top level, derive overall
+                    dims = {k: v for k, v in value.items() if isinstance(v, dict) and "verdict" in v}
+                    if dims:
+                        all_pass = all(d.get("verdict") == "PASS" for d in dims.values())
+                        results[pn] = EvaluationResult(
+                            overall=Verdict.PASS if all_pass else Verdict.FAIL,
+                            dimensions={k: DimensionResult(**v) for k, v in dims.items()},
+                        )
+                    else:
+                        logger.warning("Unrecognized eval format for page %s: %s", key, list(value.keys()))
             except (ValueError, TypeError) as e:
                 logger.warning("Failed to parse evaluation for page %s: %s", key, e)
     except (json.JSONDecodeError, TypeError) as e:
