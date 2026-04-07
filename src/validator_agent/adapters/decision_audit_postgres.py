@@ -73,8 +73,8 @@ class PostgresDecisionAuditAdapter(DecisionAuditPort):
                     workflow_id, agent_name, decision_type,
                     input_summary, output_summary, reasoning_steps,
                     confidence_score, prompt_version, model_id,
-                    grounding_sources
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    grounding_sources, assessor_id
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             """
 
             # Extract structured fields from the payload, mirroring the
@@ -86,6 +86,7 @@ class PostgresDecisionAuditAdapter(DecisionAuditPort):
             prompt_version = payload.get("prompt_version")
             model_id = payload.get("model_id")
             grounding_sources = payload.get("grounding_sources")
+            assessor_id = payload.get("assessor_id")
 
             await pool.execute(
                 sql,
@@ -99,6 +100,7 @@ class PostgresDecisionAuditAdapter(DecisionAuditPort):
                 prompt_version,
                 model_id,
                 json.dumps(grounding_sources) if grounding_sources is not None else None,
+                assessor_id,
             )
 
             logger.info(
