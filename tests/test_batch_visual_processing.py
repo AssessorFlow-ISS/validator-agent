@@ -376,26 +376,46 @@ class TestProcessVisualBatch:
 
     def test_process_visual_batch_returns_dict_keyed_by_page_number(self):
         """process_visual_batch returns {page_number: VisualProcessResult}."""
-        # This will fail until process_visual_batch is implemented
         batch_items = _make_batch_items([3, 5, 8])
+
+        batch_response = (
+            "## Page 3\nDescription of page 3 diagram.\n\n"
+            "## Page 5\nDescription of page 5 chart.\n\n"
+            "## Page 8\nDescription of page 8 table."
+        )
+
+        # Mock both the generator call and the evaluator call via _call_model_broker
+        import json as json_mod
+        page_eval = {
+            "overall": "PASS",
+            "dimensions": {
+                "accuracy": {"verdict": "PASS", "feedback": None},
+                "completeness": {"verdict": "PASS", "feedback": None},
+                "educational_value": {"verdict": "PASS", "feedback": None},
+            },
+            "retry_prompt_supplement": None,
+        }
+        eval_response = json_mod.dumps({
+            "3": page_eval,
+            "5": page_eval,
+            "8": page_eval,
+        })
+
+        call_count = {"n": 0}
+
+        def broker_side_effect(messages, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return batch_response  # generator call
+            return eval_response  # evaluator call
 
         with patch(
             "validator_agent.pipeline.visual_understanding.check_image_moderation"
         ) as mock_mod, patch(
-            "validator_agent.pipeline.visual_understanding.OpenAI"
-        ) as mock_openai:
+            "validator_agent.pipeline.visual_understanding._call_model_broker"
+        ) as mock_broker:
             mock_mod.return_value = ImageModerationResult(flagged=False)
-
-            # Mock the chat completion for batch
-            mock_client = MagicMock()
-            mock_openai.return_value = mock_client
-            mock_response = MagicMock()
-            mock_response.choices[0].message.content = (
-                "## Page 3\nDescription of page 3 diagram.\n\n"
-                "## Page 5\nDescription of page 5 chart.\n\n"
-                "## Page 8\nDescription of page 8 table."
-            )
-            mock_client.chat.completions.create.return_value = mock_response
+            mock_broker.side_effect = broker_side_effect
 
             results = process_visual_batch(batch_items)
 
@@ -405,7 +425,6 @@ class TestProcessVisualBatch:
                 assert isinstance(results[pn], VisualProcessResult)
                 assert results[pn].source in ("llm", "ocr_fallback")
 
-    @patch("validator_agent.pipeline.visual_understanding.OPENAI_API_KEY", "test-key")
     def test_process_visual_batch_harmful_image_terminates_early(self):
         """If any image in batch is flagged harmful, return immediately."""
         batch_items = _make_batch_items([1, 2, 3])
@@ -435,7 +454,6 @@ class TestProcessVisualBatch:
 class TestEvaluateVisualBatch:
     """Unit tests for the batch evaluator function."""
 
-    @patch("validator_agent.pipeline.visual_understanding.OPENAI_API_KEY", "test-key")
     def test_evaluate_batch_returns_per_page_verdicts(self):
         """evaluate_visual_batch returns dict of {page_number: EvaluationResult}."""
         batch_items = _make_batch_items([1, 2, 3])
@@ -445,32 +463,26 @@ class TestEvaluateVisualBatch:
             3: "Description of page 3",
         }
 
+        import json as json_mod
+        page_eval = {
+            "overall": "PASS",
+            "dimensions": {
+                "accuracy": {"verdict": "PASS", "feedback": None},
+                "completeness": {"verdict": "PASS", "feedback": None},
+                "educational_value": {"verdict": "PASS", "feedback": None},
+            },
+            "retry_prompt_supplement": None,
+        }
+        eval_response = json_mod.dumps({
+            "1": page_eval,
+            "2": page_eval,
+            "3": page_eval,
+        })
+
         with patch(
-            "validator_agent.pipeline.visual_understanding.OpenAI"
-        ) as mock_openai:
-            mock_client = MagicMock()
-            mock_openai.return_value = mock_client
-
-            # evaluate_visual_batch uses JSON mode — response is a JSON object
-            # keyed by page number strings
-            import json as json_mod
-            page_eval = {
-                "overall": "PASS",
-                "dimensions": {
-                    "accuracy": {"verdict": "PASS", "feedback": None},
-                    "completeness": {"verdict": "PASS", "feedback": None},
-                    "educational_value": {"verdict": "PASS", "feedback": None},
-                },
-                "retry_prompt_supplement": None,
-            }
-            mock_response = MagicMock()
-            mock_response.choices[0].message.content = json_mod.dumps({
-                "1": page_eval,
-                "2": page_eval,
-                "3": page_eval,
-            })
-            mock_client.chat.completions.create.return_value = mock_response
-
+            "validator_agent.pipeline.visual_understanding._call_model_broker",
+            return_value=eval_response,
+        ):
             eval_results = evaluate_visual_batch(batch_items, descriptions)
 
             assert isinstance(eval_results, dict)
