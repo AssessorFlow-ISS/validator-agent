@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "accessorflow")
 VISUAL_BATCH_SIZE = int(os.getenv("VISUAL_BATCH_SIZE", "3"))
+VISUAL_BATCH_STAGGER_SECONDS = float(os.getenv("VISUAL_BATCH_STAGGER_SECONDS", "2.0"))
 LOCATION = os.getenv("GCP_LOCATION", "asia-southeast1")
 PROCESSOR_ID = os.getenv("DOCUMENTAI_PROCESSOR_ID", "dabf82e23a09dead")
 ENABLE_VISUAL = os.getenv("ENABLE_VISUAL", "true").lower() == "true"
@@ -138,14 +139,19 @@ def _enhance_visual_pages(result: OcrResult, page_image_map: dict[int, bytes]) -
         ]
         batches.append(batch_items)
 
-    # Phase 3: Run all batches in parallel
+    # Phase 3: Run batches in parallel with staggered submission
+    # Stagger by VISUAL_BATCH_STAGGER_SECONDS to avoid hitting provider TPM rate limits.
+    # With 5 concurrent batches of 3 high-res images each (~6K tokens/batch),
+    # simultaneous submission can exhaust a 30K TPM limit instantly.
     all_results: dict[int, object] = {}
 
     with ThreadPoolExecutor(max_workers=min(len(batches), 5)) as executor:
-        future_to_batch = {
-            executor.submit(process_visual_batch, batch): batch
-            for batch in batches
-        }
+        future_to_batch: dict = {}
+        for i, batch in enumerate(batches):
+            if i > 0:
+                time.sleep(VISUAL_BATCH_STAGGER_SECONDS)
+            future_to_batch[executor.submit(process_visual_batch, batch)] = batch
+
         for future in as_completed(future_to_batch):
             batch = future_to_batch[future]
             try:

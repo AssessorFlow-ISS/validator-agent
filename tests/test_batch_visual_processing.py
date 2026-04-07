@@ -286,6 +286,7 @@ class TestBatchEvalFailureFallback:
 class TestParallelExecution:
     """Batches must execute concurrently via ThreadPoolExecutor."""
 
+    @patch("validator_agent.pipeline.ocr_pipeline.VISUAL_BATCH_STAGGER_SECONDS", 0)
     @patch("validator_agent.pipeline.ocr_pipeline.VISUAL_BATCH_SIZE", 3)
     @patch("validator_agent.pipeline.ocr_pipeline.classify_page", return_value="VISUAL")
     @patch("validator_agent.pipeline.ocr_pipeline.process_visual_batch")
