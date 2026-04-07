@@ -330,17 +330,20 @@ class ValidatorService:
         # Sub-card 2b: Page Classification
         classify_summary = f"Page classification: {text_pages} TEXT, {visual_pages} VISUAL out of {ocr_result.total_pages} pages"
         await self._write_progress_event(workflow_id, "assessorflow.validation.classification-complete", classify_summary)
-        await self._tracing.trace_tool_call(
-            workflow_id=workflow_id,
-            agent_name="validator-agent",
-            tool_name="page-classifier",
-            input_params={"total_pages": ocr_result.total_pages},
-            output_summary={
-                "text_pages": text_pages,
-                "visual_pages": visual_pages,
-                "page_sources": {p.page_number: p.classification for p in ocr_result.pages},
-            },
-        )
+        try:
+            await self._tracing.trace_tool_call(
+                workflow_id=workflow_id,
+                agent_name="validator-agent",
+                tool_name="page-classifier",
+                input_params={"total_pages": ocr_result.total_pages},
+                output_summary={
+                    "text_pages": text_pages,
+                    "visual_pages": visual_pages,
+                    "page_sources": {str(p.page_number): p.classification for p in ocr_result.pages},
+                },
+            )
+        except Exception:
+            logger.warning("trace_page_classifier_failed", workflow_id=workflow_id, exc_info=True)
 
         # Sub-card 2c: Visual Understanding (only if VISUAL pages exist)
         if visual_pages > 0:
@@ -353,22 +356,25 @@ class ValidatorService:
                 visual_summary += f", {fallback_pages} fell back to OCR text"
             if ocr_result.visual_pages_processed > 0:
                 visual_summary += f". {ocr_result.visual_pages_processed} pages produced richer descriptions"
-            await self._write_progress_event(workflow_id, "assessorflow.validation.visual-complete", visual_summary)
-            await self._tracing.trace_tool_call(
-                workflow_id=workflow_id,
-                agent_name="validator-agent",
-                tool_name="visual-understanding",
-                input_params={"visual_pages": visual_pages},
-                output_summary={
-                    "llm_enhanced": llm_pages,
-                    "ocr_fallback": fallback_pages,
-                    "visual_pages_processed": ocr_result.visual_pages_processed,
-                    "page_details": {
-                        p.page_number: {"source": p.source, "attempts": p.visual_attempts}
-                        for p in ocr_result.pages if p.classification == "VISUAL"
+            try:
+                await self._write_progress_event(workflow_id, "assessorflow.validation.visual-complete", visual_summary)
+                await self._tracing.trace_tool_call(
+                    workflow_id=workflow_id,
+                    agent_name="validator-agent",
+                    tool_name="visual-understanding",
+                    input_params={"visual_pages": visual_pages},
+                    output_summary={
+                        "llm_enhanced": llm_pages,
+                        "ocr_fallback": fallback_pages,
+                        "visual_pages_processed": ocr_result.visual_pages_processed,
+                        "page_details": {
+                            str(p.page_number): {"source": p.source, "attempts": p.visual_attempts}
+                            for p in ocr_result.pages if p.classification == "VISUAL"
+                        },
                     },
-                },
-            )
+                )
+            except Exception:
+                logger.warning("trace_visual_understanding_failed", workflow_id=workflow_id, exc_info=True)
 
         if ocr_result.overall_status == "TERMINATE":
             reason = "HARMFUL_IMAGE" if ocr_result.harmful_image_detected else "OCR_FAILED"
