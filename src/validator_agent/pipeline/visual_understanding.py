@@ -1,7 +1,8 @@
-"""Pass 3: Visual understanding — GPT-4o generator + multi-dimension evaluator.
+"""Pass 3: Visual understanding — multimodal generator + multi-dimension evaluator.
 
-For pages classified as VISUAL, sends the full page image + OCR text to GPT-4o
-to produce a complete, context-aware rewrite that integrates text and visual descriptions.
+For pages classified as VISUAL, sends the full page image + OCR text to a
+vision-capable LLM (via Model Broker) to produce a complete, context-aware
+rewrite that integrates text and visual descriptions.
 
 Uses Evaluator-Optimizer pattern with structured per-dimension feedback.
 
@@ -9,10 +10,9 @@ Also includes image moderation via OpenAI Moderation API — catches harmful/sex
 imagery BEFORE spending on the generator. If flagged, the page is marked as harmful
 and the entire file terminates (no need to proceed to Component 3).
 
-NOTE: This file uses OpenAI directly (not Model Broker) because the generator
-and evaluator send page IMAGES to GPT-4o. Model Broker does not yet support
-multimodal image payloads. Image moderation also stays direct (free API, not LLM).
-TODO: Route through Model Broker when multimodal support is added.
+LLM calls route through the Model Broker for fallback chain, budget tracking,
+and access to higher-TPM models. Image moderation stays as direct OpenAI
+(free API, not an LLM call).
 
 Prompt templates loaded from ``prompts/visual_generator.yaml`` and
 ``prompts/visual_evaluator.yaml`` (ADR-39).
@@ -27,6 +27,7 @@ import os
 import re
 from enum import Enum
 
+import httpx
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
@@ -35,8 +36,9 @@ from validator_agent.pipeline.prompt_loader import load_prompt
 logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-GENERATOR_MODEL = os.getenv("GENERATOR_MODEL", "gpt-4o")
-EVALUATOR_MODEL = os.getenv("EVALUATOR_MODEL", "gpt-4o")
+GENERATOR_MODEL = os.getenv("GENERATOR_MODEL", "gpt-4.1-mini")
+EVALUATOR_MODEL = os.getenv("EVALUATOR_MODEL", "gpt-4.1-mini")
+MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "http://localhost:8010")
 
 # ── Load prompt templates (ADR-39) ────
 
@@ -95,6 +97,78 @@ def _encode_image_b64(image_bytes: bytes) -> str:
     return base64.b64encode(image_bytes).decode("utf-8")
 
 
+def _extract_text_from_messages(messages: list[dict]) -> str:
+    """Extract text-only content from OpenAI-format messages for the prompt field."""
+    parts: list[str] = []
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if part.get("type") == "text":
+                    parts.append(part.get("text", ""))
+    return "\n".join(parts)[:4000]  # Truncate for guardrail scanning
+
+
+def _call_model_broker(
+    messages: list[dict],
+    task_key: str,
+    *,
+    max_tokens: int = 2000,
+    temperature: float = 0.2,
+    workflow_id: str | None = None,
+    prompt_version: str = "validator/visual_generator@v1",
+    response_format: str | None = None,
+    response_schema: dict | None = None,
+) -> str:
+    """Call the Model Broker with multimodal messages.
+
+    Uses httpx (sync) since visual_understanding.py functions are synchronous.
+
+    Args:
+        messages: OpenAI-format messages array (may contain image_url parts).
+        task_key: TASK_TIER_MAP key for routing.
+        max_tokens: Max completion tokens.
+        temperature: Sampling temperature.
+        workflow_id: Session ID for budget tracking.
+        prompt_version: Prompt version string for audit trail.
+        response_format: Set to "json" for structured output.
+        response_schema: JSON Schema for structured output.
+
+    Returns:
+        LLM completion text.
+
+    Raises:
+        httpx.HTTPStatusError: On non-2xx response from Model Broker.
+    """
+    session_id = workflow_id or os.getenv("CURRENT_WORKFLOW_ID", "unknown")
+    prompt_text = _extract_text_from_messages(messages)
+
+    payload: dict = {
+        "messages": messages,
+        "prompt": prompt_text,
+        "task_key": task_key,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "session_id": session_id,
+        "agent_id": "validator-agent",
+        "prompt_version": prompt_version,
+    }
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if response_schema is not None:
+        payload["response_schema"] = response_schema
+
+    response = httpx.post(
+        f"{MODEL_BROKER_URL}/api/v1/generate",
+        json=payload,
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    return response.json()["content"]
+
+
 def check_image_moderation(page_image_bytes: bytes) -> ImageModerationResult:
     """Run OpenAI Moderation API on a page image.
 
@@ -139,19 +213,20 @@ def generate_visual_description(
     ocr_text: str,
     previous_output: str | None = None,
     retry_feedback: str | None = None,
+    workflow_id: str | None = None,
 ) -> str:
-    """Generate a description of a visual page using GPT-4o.
+    """Generate a description of a visual page via Model Broker.
 
     Args:
         page_image_bytes: PNG bytes of the page image.
         ocr_text: OCR-extracted text from this page.
         previous_output: If retrying, the previous generator output.
         retry_feedback: If retrying, the evaluator's structured feedback.
+        workflow_id: Session ID for budget tracking.
 
     Returns:
         Generated text description of the page.
     """
-    client = OpenAI(api_key=OPENAI_API_KEY)
     image_b64 = _encode_image_b64(page_image_bytes)
 
     if previous_output and retry_feedback:
@@ -162,73 +237,88 @@ def generate_visual_description(
 
     system_prompt = GENERATOR_SYSTEM_PROMPT.format(ocr_text=ocr_text[:3000])
 
-    response = client.chat.completions.create(
-        model=GENERATOR_MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": user_content},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{image_b64}",
-                            "detail": "high",
-                        },
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": user_content},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{image_b64}",
+                        "detail": "high",
                     },
-                ],
-            },
-        ],
+                },
+            ],
+        },
+    ]
+
+    return _call_model_broker(
+        messages,
+        task_key="validator.visual_generation",
         max_tokens=2000,
         temperature=0.2,
-    )
-
-    return response.choices[0].message.content.strip()
+        workflow_id=workflow_id,
+        prompt_version="validator/visual_generator@v1",
+    ).strip()
 
 
 def evaluate_description(
     page_image_bytes: bytes,
     generated_description: str,
-) -> dict:
+    workflow_id: str | None = None,
+) -> EvaluationResult:
     """Evaluate a generated description against the original page image.
 
     Args:
         page_image_bytes: PNG bytes of the page image.
         generated_description: The generator's output to evaluate.
+        workflow_id: Session ID for budget tracking.
 
     Returns:
-        Structured evaluation dict with per-dimension verdicts.
+        Structured EvaluationResult with per-dimension verdicts.
     """
-    client = OpenAI(api_key=OPENAI_API_KEY)
     image_b64 = _encode_image_b64(page_image_bytes)
 
-    response = client.beta.chat.completions.parse(
-        model=EVALUATOR_MODEL,
-        messages=[
-            {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Description to evaluate:\n\n{generated_description}",
+    # Build the JSON schema from EvaluationResult for structured output
+    eval_schema = EvaluationResult.model_json_schema()
+    # Clean schema for Gemini compatibility (remove unsupported keys)
+    for key in ("$defs", "title", "additionalProperties"):
+        eval_schema.pop(key, None)
+
+    messages = [
+        {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Description to evaluate:\n\n{generated_description}",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{image_b64}",
+                        "detail": "high",
                     },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/png;base64,{image_b64}",
-                            "detail": "high",
-                        },
-                    },
-                ],
-            },
-        ],
-        response_format=EvaluationResult,
+                },
+            ],
+        },
+    ]
+
+    raw = _call_model_broker(
+        messages,
+        task_key="validator.visual_evaluation",
+        max_tokens=1500,
         temperature=0,
+        workflow_id=workflow_id,
+        prompt_version="validator/visual_evaluator@v1",
+        response_format="json",
+        response_schema=eval_schema,
     )
 
-    return response.choices[0].message.parsed
+    return EvaluationResult.model_validate_json(raw)
 
 
 def _format_evaluation_feedback(evaluation: EvaluationResult) -> str:
@@ -250,15 +340,9 @@ def _format_evaluation_feedback(evaluation: EvaluationResult) -> str:
 def process_visual_page(
     page_image_bytes: bytes,
     ocr_text: str,
+    workflow_id: str | None = None,
 ) -> VisualProcessResult:
     """Process a visual page through the Generator + Evaluator-Optimizer loop."""
-    if not OPENAI_API_KEY:
-        return VisualProcessResult(
-            text=ocr_text,
-            source="ocr_fallback",
-            error="No OPENAI_API_KEY set",
-        )
-
     # ── Image moderation check (before spending on generator) ────
     moderation = check_image_moderation(page_image_bytes)
     if moderation.flagged:
@@ -273,7 +357,9 @@ def process_visual_page(
 
     # Initial generation
     try:
-        generated = generate_visual_description(page_image_bytes, ocr_text)
+        generated = generate_visual_description(
+            page_image_bytes, ocr_text, workflow_id=workflow_id,
+        )
     except Exception as e:
         return VisualProcessResult(
             text=ocr_text,
@@ -285,7 +371,9 @@ def process_visual_page(
     # Evaluate + retry loop
     for attempt in range(1, MAX_RETRIES + 2):
         try:
-            evaluation = evaluate_description(page_image_bytes, generated)
+            evaluation = evaluate_description(
+                page_image_bytes, generated, workflow_id=workflow_id,
+            )
         except Exception as e:
             evaluations.append({"attempt": attempt, "error": str(e)})
             break
@@ -311,6 +399,7 @@ def process_visual_page(
                 page_image_bytes, ocr_text,
                 previous_output=generated,
                 retry_feedback=feedback,
+                workflow_id=workflow_id,
             )
         except Exception as e:
             evaluations.append({"attempt": attempt + 1, "error": f"Retry failed: {e}"})
@@ -375,21 +464,17 @@ def _parse_batch_descriptions(response_text: str, page_numbers: list[int]) -> di
 
 def process_visual_batch(
     batch_items: list[tuple[int, bytes, str]],
+    workflow_id: str | None = None,
 ) -> dict[int, VisualProcessResult]:
-    """Process multiple visual pages in a single GPT-4o call.
+    """Process multiple visual pages in a single Model Broker call.
 
     Args:
         batch_items: List of (page_number, page_image_bytes, ocr_text) tuples.
+        workflow_id: Session ID for budget tracking.
 
     Returns:
         Dict of {page_number: VisualProcessResult}.
     """
-    if not OPENAI_API_KEY:
-        return {
-            pn: VisualProcessResult(text=ocr, source="ocr_fallback", error="No OPENAI_API_KEY set")
-            for pn, _, ocr in batch_items
-        }
-
     page_numbers = [item[0] for item in batch_items]
     results: dict[int, VisualProcessResult] = {}
 
@@ -406,7 +491,7 @@ def process_visual_batch(
             # Return immediately — harmful image terminates the batch
             return results
 
-    # Phase 2: Single GPT-4o call for all pages in batch
+    # Phase 2: Single Model Broker call for all pages in batch
     ocr_context = "\n\n".join(
         f"--- Page {pn} OCR ---\n{ocr[:3000]}"
         for pn, _, ocr in batch_items
@@ -423,18 +508,20 @@ def process_visual_batch(
             },
         })
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
     try:
-        response = client.chat.completions.create(
-            model=GENERATOR_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
+        raw_text = _call_model_broker(
+            messages,
+            task_key="validator.visual_generation",
             max_tokens=min(2000 * len(batch_items), 16000),
             temperature=0.2,
-        )
-        raw_text = response.choices[0].message.content.strip()
+            workflow_id=workflow_id,
+            prompt_version="validator/visual_generator@v1",
+        ).strip()
     except Exception as e:
         logger.warning("Batch generator failed: %s — falling back to single-page", e)
         return {
@@ -446,14 +533,14 @@ def process_visual_batch(
     descriptions = _parse_batch_descriptions(raw_text, page_numbers)
 
     # Phase 4: Evaluate all descriptions in one call
-    eval_results = evaluate_visual_batch(batch_items, descriptions)
+    eval_results = evaluate_visual_batch(batch_items, descriptions, workflow_id=workflow_id)
 
     # Phase 5: Build results — retry failed pages via single-page fallback
     for pn, img_bytes, ocr_text in batch_items:
         if pn not in descriptions:
             # Parser couldn't extract this page — fall back to single-page
             logger.warning("Batch parse missing page %d — falling back to single-page", pn)
-            results[pn] = process_visual_page(img_bytes, ocr_text)
+            results[pn] = process_visual_page(img_bytes, ocr_text, workflow_id=workflow_id)
             continue
 
         page_eval = eval_results.get(pn)
@@ -467,7 +554,7 @@ def process_visual_batch(
         else:
             # Evaluation failed or missing — retry via single-page
             logger.info("Page %d failed batch evaluation — retrying single-page", pn)
-            results[pn] = process_visual_page(img_bytes, ocr_text)
+            results[pn] = process_visual_page(img_bytes, ocr_text, workflow_id=workflow_id)
 
     return results
 
@@ -475,19 +562,18 @@ def process_visual_batch(
 def evaluate_visual_batch(
     batch_items: list[tuple[int, bytes, str]],
     descriptions: dict[int, str],
+    workflow_id: str | None = None,
 ) -> dict[int, EvaluationResult]:
-    """Evaluate multiple page descriptions in a single GPT-4o call.
+    """Evaluate multiple page descriptions in a single Model Broker call.
 
     Args:
         batch_items: List of (page_number, page_image_bytes, ocr_text) tuples.
         descriptions: Dict of {page_number: generated_description}.
+        workflow_id: Session ID for budget tracking.
 
     Returns:
         Dict of {page_number: EvaluationResult}.
     """
-    if not OPENAI_API_KEY:
-        return {}
-
     page_numbers = [item[0] for item in batch_items if item[0] in descriptions]
     if not page_numbers:
         return {}
@@ -520,19 +606,21 @@ def evaluate_visual_batch(
         '"retry_prompt_supplement": null}, "5": {...}}'
     )
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    messages = [
+        {"role": "system", "content": eval_system},
+        {"role": "user", "content": user_content},
+    ]
+
     try:
-        response = client.chat.completions.create(
-            model=EVALUATOR_MODEL,
-            messages=[
-                {"role": "system", "content": eval_system},
-                {"role": "user", "content": user_content},
-            ],
-            response_format={"type": "json_object"},
+        raw_text = _call_model_broker(
+            messages,
+            task_key="validator.visual_evaluation",
             max_tokens=min(1500 * len(page_numbers), 12000),
             temperature=0,
-        )
-        raw_text = response.choices[0].message.content.strip()
+            workflow_id=workflow_id,
+            prompt_version="validator/visual_evaluator@v1",
+            response_format="json",
+        ).strip()
     except Exception as e:
         logger.warning("Batch evaluator failed: %s", e)
         return {}
