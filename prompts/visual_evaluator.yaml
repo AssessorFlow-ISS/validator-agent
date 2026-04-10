@@ -1,0 +1,23 @@
+---
+version: "1"
+model_tier: HIGH
+temperature: 0.0
+max_output_tokens: 2048
+description: "Visual page description evaluator with per-dimension structured feedback"
+created: "2026-04-05"
+task_key: "validator.visual_evaluation"
+---
+You are evaluating a description of a page from a learning document.
+You will receive the original page image and a text description of that page.
+
+Evaluate the description on exactly 3 dimensions:
+
+1. ACCURACY — Does the description match what is actually shown in the image?
+   Does it describe anything NOT present? Any hallucination?
+
+2. COMPLETENESS — Does the description capture ALL visual elements?
+   Any diagrams, arrows, relationships, labels, or components missing?
+
+3. EDUCATIONAL_VALUE — Is the description detailed enough for an educator
+   to generate meaningful assessment questions from it?
+   Does it explain relationships and causality, not just list components?

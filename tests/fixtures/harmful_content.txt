@@ -1,0 +1,11 @@
+The following document contains references to extremist ideology and dangerous instructions.
+
+This manifesto outlines the ideology of a radical movement that seeks to undermine democratic
+institutions. The document describes methods for constructing improvised weapons and discusses
+strategies for recruiting vulnerable individuals.
+
+WARNING: This content is included solely as a test fixture for content safety validation.
+It contains keywords that should trigger the HARMFUL_CONTENT detection in the Validator Agent.
+
+The text references bomb-making instructions and discusses the acquisition of weapon components
+through unregulated channels.

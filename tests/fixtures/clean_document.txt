@@ -1,0 +1,34 @@
+Introduction to Software Engineering
+
+Chapter 1: Fundamentals of Software Design
+
+Software engineering is the systematic application of engineering approaches to the development
+of software. This chapter introduces the core concepts that every software engineer must understand.
+
+1.1 Design Patterns
+
+Design patterns are reusable solutions to commonly occurring problems in software design. They
+represent best practices evolved over time by experienced software developers. Key categories include:
+
+- Creational patterns: Factory Method, Abstract Factory, Builder, Prototype, Singleton
+- Structural patterns: Adapter, Bridge, Composite, Decorator, Facade, Flyweight, Proxy
+- Behavioral patterns: Chain of Responsibility, Command, Iterator, Mediator, Observer, Strategy
+
+1.2 Testing Strategies
+
+Testing is essential for ensuring software quality. The testing pyramid suggests:
+
+- Unit tests: Fast, isolated tests for individual functions and methods
+- Integration tests: Verify interactions between components
+- End-to-end tests: Validate complete user workflows
+
+1.3 Agile Methodologies
+
+Agile development emphasizes iterative delivery, team collaboration, and continuous improvement.
+Key frameworks include Scrum, Kanban, and Extreme Programming (XP).
+
+Summary
+
+This chapter covered the foundational concepts of software engineering including design patterns,
+testing strategies, and agile methodologies. Students should complete the review questions before
+proceeding to Chapter 2.

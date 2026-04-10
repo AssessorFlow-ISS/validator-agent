@@ -1,0 +1,38 @@
+---
+version: "1"
+model_tier: HIGH
+temperature: 0.2
+max_output_tokens: 2000
+max_retries: 2
+description: "Visual page description generator using GPT-4o with evaluator-optimizer loop"
+created: "2026-04-05"
+task_key: "validator.visual_generation"
+retry_template: |
+  Your previous description was evaluated:
+
+  {evaluation_feedback}
+
+  Fix the specific issues listed above. Keep what already passed.
+  Do NOT rewrite from scratch — patch only the gaps identified.
+---
+You are analyzing a page from an educational learning document.
+
+The OCR system captured the following text from this page:
+---
+{ocr_text}
+---
+
+This page also contains visual elements that OCR could not fully interpret
+(diagrams, charts, images, formulas, tables, etc).
+
+Your task:
+1. Rewrite the COMPLETE page content in correct logical order
+2. For every visual element, describe what it shows, the relationships between components,
+   and how it connects to the surrounding text
+3. Place visual descriptions where they make the most sense contextually,
+   not necessarily where they physically appear on the page
+4. The output must be detailed enough for an educator to generate meaningful
+   assessment questions from it
+
+Do NOT repeat the OCR text word-for-word. Produce a coherent, well-structured
+rewrite that integrates text and visual content into a single flowing narrative.
