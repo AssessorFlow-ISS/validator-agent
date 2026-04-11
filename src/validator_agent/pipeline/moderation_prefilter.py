@@ -1,17 +1,23 @@
-"""Stage 1: OpenAI Moderation API pre-filter.
+"""Stage 1: OpenAI Moderation API pre-filter (via Model Broker).
 
 Free, fast (~100ms), deterministic. Catches obviously harmful content
 before spending on 3 GPT-4o analyzers. Saves ~$0.20 per rejected document.
+
+Routes through Model Broker POST /api/v1/moderate so that all external
+API calls are centralized (ADR-42 invariant #6).
 """
 
 from __future__ import annotations
 
+import logging
 import os
 
-from openai import OpenAI
+import httpx
 from pydantic import BaseModel, Field
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+logger = logging.getLogger(__name__)
+
+MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "http://localhost:8010")
 
 
 class ModerationCheckResult(BaseModel):
@@ -21,28 +27,27 @@ class ModerationCheckResult(BaseModel):
 
 
 def check_moderation(text: str) -> ModerationCheckResult:
-    """Run OpenAI Moderation API on text."""
-    if not OPENAI_API_KEY:
-        return ModerationCheckResult(error="No OPENAI_API_KEY set — skipping pre-filter")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
-
+    """Run OpenAI Moderation API on text via Model Broker."""
     try:
         truncated = text[:32000]
 
-        response = client.moderations.create(
-            model="omni-moderation-latest",
-            input=truncated,
+        response = httpx.post(
+            f"{MODEL_BROKER_URL}/api/v1/moderate",
+            json={
+                "input": truncated,
+                "model": "omni-moderation-latest",
+                "session_id": os.getenv("CURRENT_WORKFLOW_ID", "no-session"),
+                "agent_id": "validator-agent",
+            },
+            timeout=30.0,
         )
-
-        result = response.results[0]
-        flagged_categories = [
-            cat for cat, flagged in result.categories.model_dump().items() if flagged
-        ]
+        response.raise_for_status()
+        data = response.json()
 
         return ModerationCheckResult(
-            flagged=result.flagged,
-            categories=flagged_categories,
+            flagged=data["flagged"],
+            categories=data.get("categories", []),
         )
     except Exception as e:
+        logger.warning("moderation_prefilter_failed: %s", e)
         return ModerationCheckResult(error=f"Moderation API error: {e}")
