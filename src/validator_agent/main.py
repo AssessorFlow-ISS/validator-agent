@@ -187,18 +187,20 @@ def create_app() -> FastAPI:
                             source = m.get("source", "upload")
                             storage_path = m.get("storage_path", "")
 
-                            # Web research .md files are stored at {UPLOAD_DIR}/materials/{workflow_id}/{file_name}
-                            # by the Web Research Agent's LocalStorageAdapter.
-                            if source == "web_research" and storage_path:
-                                local_path = os.path.join(upload_dir, storage_path)
+                            # Use storage_path from DB directly — it's a GCS URI
+                            # (gs://bucket/materials/assessment_id/file.pdf) in GKE,
+                            # or a local path in dev. The StoragePort adapter handles both.
+                            if storage_path.startswith("gs://"):
+                                resolved_path = storage_path
+                            elif source == "web_research" and storage_path:
+                                resolved_path = os.path.join(upload_dir, storage_path)
                             else:
-                                # Original uploads: API Server stores as {id}_{file_name}
-                                local_path = os.path.join(upload_dir, f"{material_id}_{file_name}")
+                                resolved_path = os.path.join(upload_dir, f"{material_id}_{file_name}")
 
                             file_infos.append(
                                 FileInfo(
                                     file_name=file_name,
-                                    storage_path=local_path,
+                                    storage_path=resolved_path,
                                     file_type=m.get("file_type", "pdf"),
                                 )
                             )
