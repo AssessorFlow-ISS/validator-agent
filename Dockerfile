@@ -2,11 +2,15 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+# Install af-shared (peer dependency for all agents)
+COPY --from=shared . /tmp/af-shared/
+RUN pip install --no-cache-dir "/tmp/af-shared[langfuse]" && rm -rf /tmp/af-shared
 
+# Copy everything then install
+COPY pyproject.toml README.md ./
 COPY src/ src/
 COPY prompts/ prompts/
+RUN pip install --no-cache-dir -e ".[postgres]"
 
 EXPOSE 8080
 
