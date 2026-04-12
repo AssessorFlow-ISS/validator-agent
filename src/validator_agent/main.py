@@ -8,6 +8,7 @@ In event-driven mode (EVENT_ADAPTER=pubsub), the agent subscribes to
 assessorflow.validation.trigger on startup and processes messages
 automatically — no HTTP call needed from the Orchestrator.
 """
+
 from __future__ import annotations
 
 import os
@@ -15,7 +16,11 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+# Load environment variables from .env file if present
+load_dotenv()
 from fastapi.middleware.cors import CORSMiddleware
 
 from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapter
@@ -62,22 +67,35 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
         model_broker = StubModelBrokerAdapter()
     elif config.llm_provider in ("http", "google_ai_studio", "vertex_ai"):
         from validator_agent.adapters.model_broker_http import ModelBrokerHttpAdapter
+
         model_broker = ModelBrokerHttpAdapter()
-        logger.info("using_real_model_broker", url=os.environ.get("MODEL_BROKER_URL", "localhost:8010"))
+        logger.info(
+            "using_real_model_broker",
+            url=os.environ.get("MODEL_BROKER_URL", "localhost:8010"),
+        )
     else:
         raise ValueError(f"Unknown LLM_PROVIDER: {config.llm_provider}")
 
     # -- Knowledge Service adapter ------------------------------------------
     if config.knowledge_adapter == "http":
-        from validator_agent.adapters.knowledge_service_http import KnowledgeServiceHttpAdapter
+        from validator_agent.adapters.knowledge_service_http import (
+            KnowledgeServiceHttpAdapter,
+        )
+
         knowledge_service = KnowledgeServiceHttpAdapter()
-        logger.info("using_http_knowledge_service", url=os.environ.get("KNOWLEDGE_SERVICE_URL", "http://localhost:8020"))
+        logger.info(
+            "using_http_knowledge_service",
+            url=os.environ.get("KNOWLEDGE_SERVICE_URL", "http://localhost:8020"),
+        )
     else:
         knowledge_service = StubKnowledgeServiceAdapter()
 
     # -- Decision Audit adapter ---------------------------------------------
     if config.audit_adapter == "postgres":
-        from validator_agent.adapters.decision_audit_postgres import PostgresDecisionAuditAdapter
+        from validator_agent.adapters.decision_audit_postgres import (
+            PostgresDecisionAuditAdapter,
+        )
+
         decision_audit = PostgresDecisionAuditAdapter()
         logger.info("using_postgres_decision_audit")
     else:
@@ -87,7 +105,10 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
     if config.event_adapter == "stub":
         event_publisher = StubEventPublisherAdapter()
     elif config.event_adapter in ("pubsub", "real", "emulator"):
-        from validator_agent.adapters.pubsub_event_publisher import PubSubEventPublisherAdapter
+        from validator_agent.adapters.pubsub_event_publisher import (
+            PubSubEventPublisherAdapter,
+        )
+
         event_publisher = PubSubEventPublisherAdapter()
         logger.info("using_real_pubsub_adapter")
     else:
@@ -96,12 +117,20 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
     # -- Storage adapter ----------------------------------------------------
     if config.storage_adapter == "local":
         from validator_agent.adapters.storage_local import LocalStorageAdapter
+
         storage = LocalStorageAdapter()
-        logger.info("using_local_storage_adapter", upload_dir=os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads"))
+        logger.info(
+            "using_local_storage_adapter",
+            upload_dir=os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads"),
+        )
     elif config.storage_adapter == "gcs":
         from validator_agent.adapters.storage_gcs import GcsStorageAdapter
+
         storage = GcsStorageAdapter()
-        logger.info("using_gcs_storage_adapter", bucket=os.environ.get("GCS_BUCKET_NAME", "(from URI)"))
+        logger.info(
+            "using_gcs_storage_adapter",
+            bucket=os.environ.get("GCS_BUCKET_NAME", "(from URI)"),
+        )
     else:
         storage = StubStorageAdapter()
 
@@ -116,6 +145,7 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
     pipeline_fn = None
     if config.llm_provider == "stub":
         from validator_agent.adapters.pipeline_stub import stub_pipeline_fn
+
         pipeline_fn = stub_pipeline_fn
 
     service = ValidatorService(
@@ -141,9 +171,12 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         """Startup/shutdown lifecycle — subscribe to Pub/Sub on startup."""
         if config.event_adapter in ("pubsub", "real", "emulator"):
-            from validator_agent.adapters.pubsub_event_publisher import PubSubEventPublisherAdapter
+            from validator_agent.adapters.pubsub_event_publisher import (
+                PubSubEventPublisherAdapter,
+            )
 
             if isinstance(event_publisher, PubSubEventPublisherAdapter):
+
                 async def handle_trigger(payload: dict) -> None:
                     """Process a validation trigger from Pub/Sub.
 
@@ -168,18 +201,29 @@ def create_app() -> FastAPI:
                     # For Phase 5 (web_research_validation), filter by source=web_research
                     # to only validate new web research content, not re-process Phase 3 materials.
                     api_base = os.environ.get("API_SERVER_URL", "http://localhost:8001")
-                    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
-                    validation_type = payload.get("validation_type", "material_validation")
+                    upload_dir = os.environ.get(
+                        "UPLOAD_DIR", "/tmp/assessorflow-uploads"
+                    )
+                    validation_type = payload.get(
+                        "validation_type", "material_validation"
+                    )
                     file_infos: list[FileInfo] = []
                     try:
-                        materials_url = f"{api_base}/api/v1/assessments/{assessment_id}/materials"
+                        materials_url = (
+                            f"{api_base}/api/v1/assessments/{assessment_id}/materials"
+                        )
                         if validation_type == "web_research_validation":
                             materials_url += "?source=web_research"
                         async with httpx.AsyncClient(timeout=10.0) as client:
                             resp = await client.get(materials_url)
                             resp.raise_for_status()
                             materials = resp.json()
-                        logger.info("materials_fetched", assessment_id=assessment_id, count=len(materials), validation_type=validation_type)
+                        logger.info(
+                            "materials_fetched",
+                            assessment_id=assessment_id,
+                            count=len(materials),
+                            validation_type=validation_type,
+                        )
 
                         for m in materials:
                             material_id = m.get("id", "")
@@ -193,7 +237,9 @@ def create_app() -> FastAPI:
                                 local_path = os.path.join(upload_dir, storage_path)
                             else:
                                 # Original uploads: API Server stores as {id}_{file_name}
-                                local_path = os.path.join(upload_dir, f"{material_id}_{file_name}")
+                                local_path = os.path.join(
+                                    upload_dir, f"{material_id}_{file_name}"
+                                )
 
                             file_infos.append(
                                 FileInfo(
@@ -230,7 +276,9 @@ def create_app() -> FastAPI:
                     request = ValidationRequest(
                         workflow_id=workflow_id,
                         assessment_id=assessment_id,
-                        validation_type=payload.get("validation_type", "material_validation"),
+                        validation_type=payload.get(
+                            "validation_type", "material_validation"
+                        ),
                         files=file_infos,
                     )
 
@@ -244,16 +292,27 @@ def create_app() -> FastAPI:
                             "assessment_id": request.assessment_id,
                             "terminal_signal": response.terminal_signal.model_dump(),
                             "file_results": [
-                                {"file_name": r.file_name, "terminal_signal": r.terminal_signal.model_dump()}
+                                {
+                                    "file_name": r.file_name,
+                                    "terminal_signal": r.terminal_signal.model_dump(),
+                                }
                                 for r in response.file_results
                             ],
                             "source_agent": "validator-agent",
                         },
                     )
-                    logger.info("validation_complete_published", workflow_id=request.workflow_id, status=response.terminal_signal.status)
+                    logger.info(
+                        "validation_complete_published",
+                        workflow_id=request.workflow_id,
+                        status=response.terminal_signal.status,
+                    )
 
-                await event_publisher.subscribe_and_process("assessorflow.validation.trigger.sub", handle_trigger)
-                logger.info("validator_listening", topic="assessorflow.validation.trigger")
+                await event_publisher.subscribe_and_process(
+                    "assessorflow.validation.trigger.sub", handle_trigger
+                )
+                logger.info(
+                    "validator_listening", topic="assessorflow.validation.trigger"
+                )
 
         yield
 
@@ -273,7 +332,10 @@ def create_app() -> FastAPI:
     )
 
     application.add_middleware(
-        CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     application.state.validator_service = service
