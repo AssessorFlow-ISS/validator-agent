@@ -2,8 +2,18 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
+# Accept build argument for private registry access (optional for local builds)
+ARG PIP_EXTRA_INDEX_URL
+ENV PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}
+
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+
+# Install dependencies - uses extra index if provided, otherwise uses public PyPI only
+RUN if [ -n "$PIP_EXTRA_INDEX_URL" ]; then \
+        pip install --no-cache-dir --extra-index-url "$PIP_EXTRA_INDEX_URL" .; \
+    else \
+        pip install --no-cache-dir .; \
+    fi
 
 COPY src/ src/
 COPY prompts/ prompts/
