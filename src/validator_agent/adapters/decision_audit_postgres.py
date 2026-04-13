@@ -28,7 +28,15 @@ class PostgresDecisionAuditAdapter(DecisionAuditPort):
         self._pool: asyncpg.Pool | None = None  # type: ignore[type-arg]
 
     def _dsn(self) -> str:
-        """Build the PostgreSQL DSN from environment variables."""
+        """Build the PostgreSQL DSN from environment variables.
+
+        Supports two modes:
+          - AUDIT_DATABASE_URL: full DSN (GKE, set by Terraform secretKeyRef)
+          - AUDIT_DB_HOST/PORT/NAME/USER/PASSWORD: individual parts (local dev)
+        """
+        full_url = os.getenv("AUDIT_DATABASE_URL")
+        if full_url:
+            return full_url
         host = os.getenv("AUDIT_DB_HOST", "localhost")
         port = os.getenv("AUDIT_DB_PORT", "15432")
         name = os.getenv("AUDIT_DB_NAME", "af_decision_audit")

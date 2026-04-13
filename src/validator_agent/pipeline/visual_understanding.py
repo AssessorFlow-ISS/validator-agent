@@ -28,14 +28,12 @@ import re
 from enum import Enum
 
 import httpx
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from validator_agent.pipeline.prompt_loader import load_prompt
 
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GENERATOR_MODEL = os.getenv("GENERATOR_MODEL", "gpt-4.1-mini")
 EVALUATOR_MODEL = os.getenv("EVALUATOR_MODEL", "gpt-4.1-mini")
 MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "http://localhost:8010")
@@ -170,41 +168,46 @@ def _call_model_broker(
 
 
 def check_image_moderation(page_image_bytes: bytes) -> ImageModerationResult:
-    """Run OpenAI Moderation API on a page image.
+    """Run OpenAI Moderation API on a page image via Model Broker.
 
     Catches harmful, sexual, violent, or hateful imagery before
-    spending on the GPT-4o generator.
+    spending on the GPT-4o generator. Routes through Model Broker
+    POST /api/v1/moderate (ADR-42 invariant #6).
     """
-    if not OPENAI_API_KEY:
-        return ImageModerationResult(error="No OPENAI_API_KEY")
-
-    client = OpenAI(api_key=OPENAI_API_KEY)
     image_b64 = _encode_image_b64(page_image_bytes)
 
-    try:
-        response = client.moderations.create(
-            model="omni-moderation-latest",
-            input=[
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/png;base64,{image_b64}",
-                    },
-                },
-            ],
-        )
+    multimodal_input = [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{image_b64}",
+            },
+        },
+    ]
 
-        result = response.results[0]
-        flagged_categories = [
-            cat for cat, flagged in result.categories.model_dump().items() if flagged
-        ]
+    try:
+        response = httpx.post(
+            f"{MODEL_BROKER_URL}/api/v1/moderate",
+            json={
+                "input": multimodal_input,
+                "model": "omni-moderation-latest",
+                "session_id": os.getenv("CURRENT_WORKFLOW_ID", "no-session"),
+                "agent_id": "validator-agent",
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        flagged_categories = data.get("categories", [])
 
         return ImageModerationResult(
-            flagged=result.flagged,
+            flagged=data["flagged"],
             categories=flagged_categories,
-            detail=f"Image moderation flagged: {', '.join(flagged_categories)}" if result.flagged else None,
+            detail=f"Image moderation flagged: {', '.join(flagged_categories)}" if data["flagged"] else None,
         )
     except Exception as e:
+        logger.warning("Image moderation via Model Broker failed: %s", e)
         return ImageModerationResult(error=f"Image moderation error: {e}")
 
 

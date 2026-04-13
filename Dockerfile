@@ -6,7 +6,7 @@ WORKDIR /app
 ARG PIP_EXTRA_INDEX_URL
 ENV PIP_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}
 
-COPY pyproject.toml .
+COPY pyproject.toml README.md ./
 COPY src/ src/
 
 # Install dependencies - uses extra index if provided, otherwise uses public PyPI only

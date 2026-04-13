@@ -7,7 +7,7 @@ top_p: 0.95
 description: "Interpret MRC readability results with contextual reasoning"
 created: "2026-03-25"
 updated: "2026-03-29"
-fallback_chain: [gemini, openai, vertex]
+fallback_chain: [vertex_ai, openai]
 ---
 A document readability checker returned:
 - Readiness: {readiness}
