@@ -61,6 +61,7 @@ class LlmClientStats:
     request_count: int = 0
     total_tokens: int = 0
     total_cost_usd: float = 0.0
+    last_model_used: str = "unknown"
 
 
 # Module-level stats accumulator
@@ -191,13 +192,16 @@ def _call_model_broker(
     tokens_total = tokens.get("total_tokens", 0)
     cost = data.get("cost_usd", 0.0)
 
+    model_used = data.get("model_used", "unknown")
+
     _stats.request_count += 1
     _stats.total_tokens += tokens_total
     _stats.total_cost_usd += cost
+    _stats.last_model_used = model_used
 
     return LlmResponse(
         content=data["content"],
-        model_used=data.get("model_used", "unknown"),
+        model_used=model_used,
         model_tier=data.get("model_tier", "HIGH"),
         tokens_input=tokens.get("prompt_tokens", 0),
         tokens_output=tokens.get("completion_tokens", 0),
@@ -255,6 +259,7 @@ def _call_openai_direct(
 
     _stats.request_count += 1
     _stats.total_tokens += (tokens_in + tokens_out)
+    _stats.last_model_used = response.model
 
     return LlmResponse(
         content=choice.message.content or "{}",

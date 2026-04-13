@@ -1054,6 +1054,19 @@ class ValidatorService:
             message="All files validated successfully",
         )
 
+    @staticmethod
+    def _build_composite_model_id() -> str:
+        """Build composite model_id from actual models used in the pipeline.
+
+        MRC and Document AI are non-LLM services with fixed descriptive names.
+        The LLM component comes from the real Model Broker response tracked
+        by llm_client.get_stats().last_model_used.
+        """
+        from validator_agent.pipeline.llm_client import get_stats
+
+        llm_model = get_stats().last_model_used
+        return f"vertex-ai-mrc + document-ai-ocr + {llm_model}"
+
     async def _log_audit_decision(
         self,
         *,
@@ -1065,6 +1078,8 @@ class ValidatorService:
         content_fitness: float = 0.0,
     ) -> None:
         """Log the validation decision to both sinks using ONE canonical format."""
+        composite_model_id = self._build_composite_model_id()
+
         entry = DecisionLogEntry(
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
@@ -1095,7 +1110,7 @@ class ValidatorService:
             reasoning_steps=reasoning_steps,
             confidence_score=content_fitness,
             prompt_version="validator/thet-pipeline@v1",
-            model_id="vertex-ai-mrc + document-ai-ocr + gpt-4.1",
+            model_id=composite_model_id,
             grounding_sources=grounding_chunk_ids or [f.file_name for f in file_results],
         )
 
