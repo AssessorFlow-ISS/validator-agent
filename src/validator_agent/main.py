@@ -281,6 +281,77 @@ def create_app() -> FastAPI:
     application.state.validator_service = service
     application.include_router(router)
 
+    # -- HTTP trigger endpoint (golden eval, no Pub/Sub) -------------------
+    @application.post("/trigger")
+    async def trigger(body: dict) -> dict:
+        """HTTP trigger — same as Pub/Sub handler, returns completion payload."""
+        import httpx
+
+        workflow_id = body.get("workflow_id", "unknown")
+        assessment_id = body.get("assessment_id", "unknown")
+        validation_type = body.get("validation_type", "material_validation")
+        api_base = os.environ.get("API_SERVER_URL", "http://localhost:8001")
+        upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
+
+        file_infos: list[FileInfo] = []
+        try:
+            materials_url = f"{api_base}/api/v1/assessments/{assessment_id}/materials"
+            if validation_type == "web_research_validation":
+                materials_url += "?source=web_research"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(materials_url)
+                resp.raise_for_status()
+                materials = resp.json()
+            for m in materials:
+                storage_path = m.get("storage_path", "")
+                if storage_path.startswith("gs://"):
+                    resolved_path = storage_path
+                elif m.get("source") == "web_research" and storage_path:
+                    resolved_path = os.path.join(upload_dir, storage_path)
+                else:
+                    resolved_path = os.path.join(
+                        upload_dir, f"{m.get('id', '')}_{m.get('file_name', 'unknown')}"
+                    )
+                file_infos.append(FileInfo(
+                    file_name=m.get("file_name", "unknown"),
+                    storage_path=resolved_path,
+                    file_type=m.get("file_type", "pdf"),
+                ))
+        except Exception:
+            logger.error("trigger_materials_fetch_failed", assessment_id=assessment_id, exc_info=True)
+
+        if not file_infos:
+            return {
+                "workflow_id": workflow_id,
+                "assessment_id": assessment_id,
+                "terminal_signal": {
+                    "status": "TERMINATE",
+                    "reason_code": "NO_MATERIALS",
+                    "message": "No materials found for assessment",
+                },
+                "file_results": [],
+                "source_agent": "validator-agent",
+            }
+
+        request = ValidationRequest(
+            workflow_id=workflow_id,
+            assessment_id=assessment_id,
+            validation_type=validation_type,
+            files=file_infos,
+        )
+        os.environ["CURRENT_WORKFLOW_ID"] = workflow_id
+        response = await service.validate(request)
+        return {
+            "workflow_id": workflow_id,
+            "assessment_id": assessment_id,
+            "terminal_signal": response.terminal_signal.model_dump(),
+            "file_results": [
+                {"file_name": r.file_name, "terminal_signal": r.terminal_signal.model_dump()}
+                for r in response.file_results
+            ],
+            "source_agent": "validator-agent",
+        }
+
     return application
 
 
