@@ -33,6 +33,15 @@ class ModelBrokerHttpAdapter(ModelBrokerPort):
             base_url=self._base_url,
             timeout=timeout,
         )
+        # Cumulative stats for test reporting
+        self.request_count: int = 0
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_tokens: int = 0
+        self.total_cost_usd: float = 0.0
+        self._per_model: dict[str, dict] = {}
+        self.last_model_used: str = "unknown"
+        self.last_model_tier: str = "unknown"
 
     async def generate(
         self,
@@ -79,10 +88,33 @@ class ModelBrokerHttpAdapter(ModelBrokerPort):
         response.raise_for_status()
         data = response.json()
 
+        # Accumulate stats
+        usage = data.get("token_usage", {})
+        p_tok = usage.get("prompt_tokens", 0)
+        c_tok = usage.get("completion_tokens", 0)
+        cost = data.get("cost_usd", 0.0)
+        self.request_count += 1
+        self.total_prompt_tokens += p_tok
+        self.total_completion_tokens += c_tok
+        self.total_tokens += p_tok + c_tok
+        self.total_cost_usd += cost
+        self.last_model_used = data.get("model_used", "unknown")
+        self.last_model_tier = data.get("model_tier", "unknown")
+
+        pm = self._per_model.setdefault(self.last_model_used, {
+            "request_count": 0, "prompt_tokens": 0, "completion_tokens": 0,
+            "total_tokens": 0, "cost_usd": 0.0, "tests_passed": 0, "tests_failed": 0,
+        })
+        pm["request_count"] += 1
+        pm["prompt_tokens"] += p_tok
+        pm["completion_tokens"] += c_tok
+        pm["total_tokens"] += p_tok + c_tok
+        pm["cost_usd"] += cost
+
         logger.info(
             "model_broker_response",
-            model=data.get("model_used"),
-            tier=data.get("model_tier"),
+            model=self.last_model_used,
+            tier=self.last_model_tier,
             latency_ms=data.get("latency_ms"),
         )
 
