@@ -66,7 +66,7 @@ class ModelBrokerHttpAdapter(ModelBrokerPort):
         request_body = {
             "task_key": task_key,
             "prompt": prompt,
-            "max_tokens": 1024,
+            "max_tokens": 65536,
             "temperature": 0.2,
             "session_id": os.environ.get("CURRENT_WORKFLOW_ID", "unknown"),
             "agent_id": "validator-agent",
