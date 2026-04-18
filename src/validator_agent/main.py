@@ -232,6 +232,7 @@ def create_app() -> FastAPI:
                     request = ValidationRequest(
                         workflow_id=workflow_id,
                         assessment_id=assessment_id,
+                        assessor_id=payload.get("assessor_id"),
                         validation_type=payload.get("validation_type", "material_validation"),
                         files=file_infos,
                     )
@@ -336,6 +337,7 @@ def create_app() -> FastAPI:
         request = ValidationRequest(
             workflow_id=workflow_id,
             assessment_id=assessment_id,
+            assessor_id=body.get("assessor_id"),
             validation_type=validation_type,
             files=file_infos,
         )
