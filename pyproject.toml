@@ -23,6 +23,10 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.32.0",
     "httpx>=0.27.0",
+    # Phase 6C.1 — Submission Service gRPC (reads materials, writes validation decisions)
+    "grpcio>=1.74.0",
+    "grpcio-tools>=1.74.0",
+    "protobuf>=5.29.0",
 ]
 
 [project.optional-dependencies]
@@ -45,3 +49,8 @@ python_functions = ["test_*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/validator_agent"]
+
+[tool.ruff]
+# Exclude auto-generated gRPC stubs from linting -- regenerated from
+# proto/submission.proto via grpc_tools.protoc and should not be hand-edited.
+extend-exclude = ["src/validator_agent/_grpc"]

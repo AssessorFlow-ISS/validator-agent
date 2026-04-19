@@ -1,0 +1,234 @@
+syntax = "proto3";
+
+package assessorflow.submission.v1;
+
+option java_multiple_files = true;
+
+// Assessment Submission Service — internal gRPC API (api_contract.md Section 2)
+// Central record keeper: owns assessment config, materials, questions, submissions, evaluations, reports.
+service SubmissionService {
+  rpc GetAssessmentConfig (GetAssessmentConfigRequest) returns (GetAssessmentConfigResponse);
+  rpc GetMaterials (GetMaterialsRequest) returns (GetMaterialsResponse);
+  rpc CreateQuestionSet (CreateQuestionSetRequest) returns (CreateQuestionSetResponse);
+  rpc WriteGeneratedQuestions (WriteGeneratedQuestionsRequest) returns (WriteGeneratedQuestionsResponse);
+  rpc GetGeneratedQuestionsWithAnswers (GetGeneratedQuestionsRequest_) returns (GetGeneratedQuestionsResponse);
+  rpc IncrementQuestionSetIteration (IncrementIterationRequest) returns (IncrementIterationResponse);
+  rpc GetApprovedQuestionsWithAnswers (GetApprovedQuestionsRequest) returns (GetApprovedQuestionsResponse);
+  rpc CreateEvaluation (CreateEvaluationRequest) returns (CreateEvaluationResponse);
+  rpc CreateGroupEvaluation (CreateGroupEvaluationRequest) returns (CreateGroupEvaluationResponse);
+  rpc GetEvaluation (GetEvaluationRequest) returns (GetEvaluationResponse);
+  rpc CreateReport (CreateReportRequest) returns (CreateReportResponse);
+  rpc UploadWebResearchMaterials (UploadWebResearchRequest) returns (UploadWebResearchResponse);
+  rpc StartWorkflow (StartWorkflowRequest) returns (StartWorkflowResponse);
+  // Added proto v2 (Phase 6C.1) — Validator agent writes a validation
+  // decision (PROCEED/REJECT with reason) on a single material.
+  rpc UpdateMaterialValidation (UpdateMaterialValidationRequest) returns (UpdateMaterialValidationResponse);
+}
+
+// --- Shared messages ---
+
+message AssessmentConfig {
+  string assessment_id = 1;
+  string workflow_id = 2;
+  string assessor_id = 3;
+  string assessment_title = 4;
+  string purpose = 5;
+  int32 duration_minutes = 6;
+  string difficulty_level = 7;
+  int32 structured_question_count = 8;
+  int32 non_structured_question_count = 9;
+  string web_research_mode = 10;
+  string status = 11;
+  string deadline = 12;
+}
+
+message MaterialInfo {
+  string material_id = 1;
+  string file_name = 2;
+  string storage_path = 3;
+  string file_type = 4;
+  string readiness_status = 5;
+  string source = 6;
+  string source_url = 7;
+  string validation_reason_code = 8;
+  string validation_message = 9;
+}
+
+message Question {
+  string question_id = 1;
+  string question_type = 2;
+  string content = 3;
+  string structured_answer = 4;
+  string non_structured_model_answer = 5;
+  string metadata_json = 6;
+  string topic_id = 7;
+  int32 iteration = 8;
+  int32 sort_order = 9;
+}
+
+message EvaluationDetail {
+  string question_id = 1;
+  string group_evaluation_id = 2;
+  double score = 3;
+  double max_score = 4;
+  string reasoning = 5;
+  string evaluation_method = 6;
+}
+
+message WebResearchFile {
+  string file_name = 1;
+  string storage_path = 2;
+  string file_type = 3;
+  string source_url = 4;
+}
+
+// --- Request/Response messages ---
+
+message GetAssessmentConfigRequest {
+  string assessment_id = 1;
+  string workflow_id = 2;
+}
+message GetAssessmentConfigResponse {
+  AssessmentConfig config = 1;
+}
+
+message GetMaterialsRequest {
+  string assessment_id = 1;
+  bool unvalidated_only = 2;
+}
+message GetMaterialsResponse {
+  repeated MaterialInfo materials = 1;
+}
+
+message CreateQuestionSetRequest {
+  string workflow_id = 1;
+}
+message CreateQuestionSetResponse {
+  string question_set_id = 1;
+  string status = 2;
+}
+
+message WriteGeneratedQuestionsRequest {
+  string question_set_id = 1;
+  repeated Question questions = 2;
+}
+message WriteGeneratedQuestionsResponse {
+  int32 questions_written = 1;
+  string status = 2;
+}
+
+// Underscore suffix to avoid name collision with response
+message GetGeneratedQuestionsRequest_ {
+  string question_set_id = 1;
+}
+message GetGeneratedQuestionsResponse {
+  repeated Question questions = 1;
+}
+
+message IncrementIterationRequest {
+  string question_set_id = 1;
+}
+message IncrementIterationResponse {
+  string question_set_id = 1;
+  int32 iteration_count = 2;
+  string status = 3;
+}
+
+message GetApprovedQuestionsRequest {
+  string assessment_id = 1;
+}
+message GetApprovedQuestionsResponse {
+  repeated Question questions = 1;
+}
+
+message CreateEvaluationRequest {
+  string workflow_id = 1;
+  string participant_id = 2;
+  string submission_id = 3;
+  double total_score = 4;
+  double max_score = 5;
+  repeated EvaluationDetail details = 6;
+}
+message CreateEvaluationResponse {
+  string evaluation_id = 1;
+  string status = 2;
+}
+
+message CreateGroupEvaluationRequest {
+  string workflow_id = 1;
+  string group_id = 2;
+  string question_id = 3;
+  double group_score = 4;
+  double max_score = 5;
+  string reasoning = 6;
+}
+message CreateGroupEvaluationResponse {
+  string group_evaluation_id = 1;
+  string status = 2;
+}
+
+message GetEvaluationRequest {
+  string workflow_id = 1;
+  string participant_id = 2;
+}
+message GetEvaluationResponse {
+  string evaluation_id = 1;
+  double total_score = 2;
+  double max_score = 3;
+  string status = 4;
+  repeated EvaluationDetail details = 5;
+}
+
+message CreateReportRequest {
+  string workflow_id = 1;
+  string participant_id = 2;
+  string evaluation_id = 3;
+  string report_content_json = 4;
+}
+message CreateReportResponse {
+  string report_id = 1;
+  string status = 2;
+}
+
+message UploadWebResearchRequest {
+  string assessment_id = 1;
+  repeated WebResearchFile files = 2;
+}
+message UploadWebResearchResponse {
+  int32 materials_registered = 1;
+  string status = 2;
+  // Added proto v2 (Phase 6C.1) — server-assigned UUIDs for the newly
+  // created assessment_materials rows, returned in the same order as
+  // the request's `files[]`. Downstream callers (Pub/Sub payloads,
+  // decision-log grounding_sources) use these to reference the rows
+  // without re-querying the DB.
+  repeated string material_ids = 3;
+}
+
+message StartWorkflowRequest {
+  string assessment_id = 1;
+}
+message StartWorkflowResponse {
+  string workflow_id = 1;
+  string correlation_id = 2;
+  string status = 3;
+}
+
+// --- Added proto v2 (Phase 6C.1) — Validator decision RPC ---
+
+message UpdateMaterialValidationRequest {
+  string assessment_id = 1;
+  string material_id = 2;
+  // PROCEED (accept), REJECT (reject), or PARTIAL (accept with caveat).
+  string readiness_status = 3;
+  // Short reason code for filtering/analytics, e.g. VALIDATION_PASSED,
+  // OCR_LOW_CONFIDENCE, OUT_OF_SCOPE.
+  string validation_reason_code = 4;
+  // Free-text explanation for the UI / audit trail.
+  string validation_message = 5;
+}
+message UpdateMaterialValidationResponse {
+  string material_id = 1;
+  string readiness_status = 2;
+  string status = 3;
+}

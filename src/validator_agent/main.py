@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapter
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
+from validator_agent.adapters.material_validation_stub import StubMaterialValidationAdapter
 from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
@@ -31,6 +32,8 @@ from validator_agent.api.schemas import FileInfo, ValidationRequest
 from validator_agent.config import ValidatorConfig
 from validator_agent.domain.content_safety import ContentSafetyReasoner
 from validator_agent.domain.services import ValidatorService
+from validator_agent.domain.terminal_signal import TerminalSignalStatus
+from validator_agent.ports.material_validation_port import MaterialValidationPort
 
 structlog.configure(
     processors=[
@@ -43,13 +46,14 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
-def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any, Any]:
+def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any, Any, MaterialValidationPort]:
     """Construct the ValidatorService with adapter implementations.
 
-    Returns (service, event_publisher, decision_audit, knowledge_service) —
-    event_publisher is returned separately so the lifespan can set up Pub/Sub
-    subscriptions; decision_audit and knowledge_service are returned for
-    graceful pool/client shutdown.
+    Returns (service, event_publisher, decision_audit, knowledge_service,
+    material_validation) — event_publisher is returned separately so the
+    lifespan can set up Pub/Sub subscriptions; decision_audit,
+    knowledge_service, and material_validation are returned for graceful
+    pool/channel shutdown.
     """
     # -- MRC adapter --------------------------------------------------------
     mrc = StubMrcAdapter()
@@ -93,6 +97,24 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
     else:
         raise ValueError(f"Unknown EVENT_ADAPTER: {config.event_adapter}")
 
+    # -- Material Validation adapter (Submission Service gRPC) -------------
+    # Phase 6C.1 — replaces the previous HTTP-to-API-Server read path and
+    # direct-DB writes to assessment_materials.readiness_status.
+    material_validation: MaterialValidationPort
+    if config.material_adapter == "grpc":
+        from validator_agent.adapters.material_validation_grpc import (
+            GrpcMaterialValidationAdapter,
+        )
+        material_validation = GrpcMaterialValidationAdapter()
+        logger.info(
+            "using_grpc_material_validation",
+            url=os.environ.get(
+                "SUBMISSION_SERVICE_GRPC_URL", "localhost:9001",
+            ),
+        )
+    else:
+        material_validation = StubMaterialValidationAdapter()
+
     # -- Storage adapter ----------------------------------------------------
     if config.storage_adapter == "local":
         from validator_agent.adapters.storage_local import LocalStorageAdapter
@@ -127,7 +149,7 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
         pipeline_fn=pipeline_fn,
     )
 
-    return service, event_publisher, decision_audit, knowledge_service
+    return service, event_publisher, decision_audit, knowledge_service, material_validation
 
 
 def create_app() -> FastAPI:
@@ -135,7 +157,7 @@ def create_app() -> FastAPI:
     config = ValidatorConfig.from_env()
     logger.info("starting_validator_agent", config=config)
 
-    service, event_publisher, decision_audit, knowledge_service = _build_service(config)
+    service, event_publisher, decision_audit, knowledge_service, material_validation = _build_service(config)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
@@ -148,12 +170,12 @@ def create_app() -> FastAPI:
                     """Process a validation trigger from Pub/Sub.
 
                     The Orchestrator dispatches {workflow_id, assessment_id, phase, agent}.
-                    This handler fetches material metadata from the API Server
-                    (GET /api/v1/assessments/{assessment_id}/materials) and builds
-                    FileInfo objects for the validation pipeline.
+                    This handler fetches material metadata from the Submission
+                    Service via gRPC (``GetMaterials``) and builds FileInfo
+                    objects for the validation pipeline, then writes a
+                    per-material decision back via ``UpdateMaterialValidation``
+                    once validation completes.
                     """
-                    import httpx
-
                     workflow_id = payload.get("workflow_id", "unknown")
                     assessment_id = payload.get("assessment_id", "unknown")
                     logger.info(
@@ -163,53 +185,12 @@ def create_app() -> FastAPI:
                         payload_keys=list(payload.keys()),
                     )
 
-                    # Fetch materials from API Server — the Orchestrator trigger
-                    # does NOT include files; we must look them up by assessment_id.
-                    # For Phase 5 (web_research_validation), filter by source=web_research
-                    # to only validate new web research content, not re-process Phase 3 materials.
-                    api_base = os.environ.get("API_SERVER_URL", "http://localhost:8001")
-                    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
                     validation_type = payload.get("validation_type", "material_validation")
-                    file_infos: list[FileInfo] = []
-                    try:
-                        materials_url = f"{api_base}/api/v1/assessments/{assessment_id}/materials"
-                        if validation_type == "web_research_validation":
-                            materials_url += "?source=web_research"
-                        async with httpx.AsyncClient(timeout=10.0) as client:
-                            resp = await client.get(materials_url)
-                            resp.raise_for_status()
-                            materials = resp.json()
-                        logger.info("materials_fetched", assessment_id=assessment_id, count=len(materials), validation_type=validation_type)
-
-                        for m in materials:
-                            material_id = m.get("id", "")
-                            file_name = m.get("file_name", "unknown")
-                            source = m.get("source", "upload")
-                            storage_path = m.get("storage_path", "")
-
-                            # Use storage_path from DB directly — it's a GCS URI
-                            # (gs://bucket/materials/assessment_id/file.pdf) in GKE,
-                            # or a local path in dev. The StoragePort adapter handles both.
-                            if storage_path.startswith("gs://"):
-                                resolved_path = storage_path
-                            elif source == "web_research" and storage_path:
-                                resolved_path = os.path.join(upload_dir, storage_path)
-                            else:
-                                resolved_path = os.path.join(upload_dir, f"{material_id}_{file_name}")
-
-                            file_infos.append(
-                                FileInfo(
-                                    file_name=file_name,
-                                    storage_path=resolved_path,
-                                    file_type=m.get("file_type", "pdf"),
-                                )
-                            )
-                    except Exception:
-                        logger.error(
-                            "materials_fetch_failed",
-                            assessment_id=assessment_id,
-                            exc_info=True,
-                        )
+                    file_infos, file_to_material_id = await _load_files_for_validation(
+                        material_validation=material_validation,
+                        assessment_id=assessment_id,
+                        validation_type=validation_type,
+                    )
 
                     if not file_infos:
                         logger.error("no_materials_found", assessment_id=assessment_id)
@@ -233,12 +214,19 @@ def create_app() -> FastAPI:
                         workflow_id=workflow_id,
                         assessment_id=assessment_id,
                         assessor_id=payload.get("assessor_id"),
-                        validation_type=payload.get("validation_type", "material_validation"),
+                        validation_type=validation_type,
                         files=file_infos,
                     )
 
                     os.environ["CURRENT_WORKFLOW_ID"] = request.workflow_id
                     response = await service.validate(request)
+
+                    await _write_material_decisions(
+                        material_validation=material_validation,
+                        assessment_id=assessment_id,
+                        response=response,
+                        file_to_material_id=file_to_material_id,
+                    )
 
                     await event_publisher.publish(
                         topic="assessorflow.validation.complete",
@@ -265,6 +253,8 @@ def create_app() -> FastAPI:
             await knowledge_service.close()
         if hasattr(decision_audit, "close"):
             await decision_audit.close()
+        if hasattr(material_validation, "close"):
+            await material_validation.close()
 
         logger.info("validator_agent_shutting_down")
 
@@ -286,40 +276,15 @@ def create_app() -> FastAPI:
     @application.post("/trigger")
     async def trigger(body: dict) -> dict:
         """HTTP trigger — same as Pub/Sub handler, returns completion payload."""
-        import httpx
-
         workflow_id = body.get("workflow_id", "unknown")
         assessment_id = body.get("assessment_id", "unknown")
         validation_type = body.get("validation_type", "material_validation")
-        api_base = os.environ.get("API_SERVER_URL", "http://localhost:8001")
-        upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
 
-        file_infos: list[FileInfo] = []
-        try:
-            materials_url = f"{api_base}/api/v1/assessments/{assessment_id}/materials"
-            if validation_type == "web_research_validation":
-                materials_url += "?source=web_research"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(materials_url)
-                resp.raise_for_status()
-                materials = resp.json()
-            for m in materials:
-                storage_path = m.get("storage_path", "")
-                if storage_path.startswith("gs://"):
-                    resolved_path = storage_path
-                elif m.get("source") == "web_research" and storage_path:
-                    resolved_path = os.path.join(upload_dir, storage_path)
-                else:
-                    resolved_path = os.path.join(
-                        upload_dir, f"{m.get('id', '')}_{m.get('file_name', 'unknown')}"
-                    )
-                file_infos.append(FileInfo(
-                    file_name=m.get("file_name", "unknown"),
-                    storage_path=resolved_path,
-                    file_type=m.get("file_type", "pdf"),
-                ))
-        except Exception:
-            logger.error("trigger_materials_fetch_failed", assessment_id=assessment_id, exc_info=True)
+        file_infos, file_to_material_id = await _load_files_for_validation(
+            material_validation=material_validation,
+            assessment_id=assessment_id,
+            validation_type=validation_type,
+        )
 
         if not file_infos:
             return {
@@ -343,6 +308,14 @@ def create_app() -> FastAPI:
         )
         os.environ["CURRENT_WORKFLOW_ID"] = workflow_id
         response = await service.validate(request)
+
+        await _write_material_decisions(
+            material_validation=material_validation,
+            assessment_id=assessment_id,
+            response=response,
+            file_to_material_id=file_to_material_id,
+        )
+
         return {
             "workflow_id": workflow_id,
             "assessment_id": assessment_id,
@@ -355,6 +328,118 @@ def create_app() -> FastAPI:
         }
 
     return application
+
+
+async def _load_files_for_validation(
+    *,
+    material_validation: MaterialValidationPort,
+    assessment_id: str,
+    validation_type: str,
+) -> tuple[list[FileInfo], dict[str, str]]:
+    """Fetch materials via Submission Service gRPC and map to FileInfo.
+
+    Returns ``(file_infos, file_name_to_material_id)``. The mapping lets
+    the caller write a per-material decision back via
+    ``UpdateMaterialValidation`` after ``ValidatorService.validate``
+    returns.
+    """
+    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
+    # Phase 5 (web_research_validation) only processes new web-research
+    # materials; the rest of Phase 3's materials were validated earlier.
+    source_filter = (
+        "web_research" if validation_type == "web_research_validation" else None
+    )
+
+    file_infos: list[FileInfo] = []
+    file_to_material_id: dict[str, str] = {}
+    try:
+        # unvalidated_only=true skips previously-PROCEEDED materials so
+        # we don't re-run the pipeline on them (mirrors the old
+        # API-Server filter but enforced server-side).
+        materials = await material_validation.get_materials(
+            assessment_id=assessment_id,
+            unvalidated_only=(validation_type == "material_validation"),
+            source=source_filter,
+        )
+    except Exception:
+        logger.error(
+            "materials_fetch_failed",
+            assessment_id=assessment_id,
+            validation_type=validation_type,
+            exc_info=True,
+        )
+        return [], {}
+
+    for material in materials:
+        storage_path = material.storage_path
+        if storage_path.startswith("gs://"):
+            resolved_path = storage_path
+        elif material.source == "web_research" and storage_path:
+            resolved_path = os.path.join(upload_dir, storage_path)
+        else:
+            resolved_path = os.path.join(
+                upload_dir, f"{material.material_id}_{material.file_name}",
+            )
+
+        file_infos.append(
+            FileInfo(
+                file_name=material.file_name,
+                storage_path=resolved_path,
+                file_type=material.file_type or "pdf",
+            )
+        )
+        if material.material_id:
+            file_to_material_id[material.file_name] = material.material_id
+
+    return file_infos, file_to_material_id
+
+
+# -- UpdateMaterialValidation helpers -----------------------------------
+
+# TerminalSignal.status -> readiness_status string (proto field).
+_READINESS_MAP: dict[TerminalSignalStatus, str] = {
+    TerminalSignalStatus.PROCEED: "PROCEED",
+    TerminalSignalStatus.PROCEED_WITH_WARNINGS: "PARTIAL",
+    TerminalSignalStatus.TERMINATE: "REJECT",
+}
+
+
+async def _write_material_decisions(
+    *,
+    material_validation: MaterialValidationPort,
+    assessment_id: str,
+    response: Any,
+    file_to_material_id: dict[str, str],
+) -> None:
+    """Write an ``UpdateMaterialValidation`` RPC per file in the response.
+
+    Fire-and-forget at the collection level -- individual RPC failures
+    are logged but do not block the Pub/Sub / HTTP reply. Materials not
+    present in ``file_to_material_id`` (e.g. files synthesized by tests
+    without a backing DB row) are skipped.
+    """
+    for file_result in response.file_results:
+        material_id = file_to_material_id.get(file_result.file_name)
+        if not material_id:
+            continue
+        signal = file_result.terminal_signal
+        readiness_status = _READINESS_MAP.get(signal.status, "REJECT")
+        try:
+            await material_validation.update_material_validation(
+                assessment_id=assessment_id,
+                material_id=material_id,
+                readiness_status=readiness_status,
+                validation_reason_code=signal.reason_code.value,
+                validation_message=signal.message or "",
+            )
+        except Exception:
+            logger.warning(
+                "material_validation_write_failed",
+                assessment_id=assessment_id,
+                material_id=material_id,
+                file_name=file_result.file_name,
+                exc_info=True,
+            )
 
 
 app = create_app()
