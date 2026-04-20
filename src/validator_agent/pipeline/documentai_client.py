@@ -131,7 +131,7 @@ def _process_online(
     """Send file bytes directly to Document AI online processing (≤ 15 pages)."""
     raw_document = documentai.RawDocument(content=file_bytes, mime_type=mime_type)
     request = documentai.ProcessRequest(name=resource_name, raw_document=raw_document)
-    response = client.process_document(request=request)
+    response = client.process_document(request=request, timeout=90)
     return _parse_document_to_pages(response.document)
 
 
