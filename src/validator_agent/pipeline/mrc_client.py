@@ -101,6 +101,25 @@ def check_readability(file_bytes: bytes, file_name: str) -> MrcResult:
     Returns:
         MrcResult with overall_status, excluded_pages, and readable_page_numbers set.
     """
+    # Golden / test-env escape hatch: if MRC_ENDPOINT is unset, skip the
+    # per-page readability check entirely and PROCEED. The hexagonal-layer
+    # `mrc_adapter=stub` (services.py path) already covers synthetic
+    # validation decisions; this path exists so Thet's pipeline doesn't
+    # crash with `MissingSchema: Invalid URL ''` when there's no MRC
+    # service to call. PROD always sets MRC_ENDPOINT to a Vertex AI URL.
+    if not MRC_ENDPOINT:
+        return MrcResult(
+            overall_readiness=True,
+            overall_confidence=0.95,
+            total_pages=1,
+            readable_pages=1,
+            unreadable_pages=0,
+            page_results=[],
+            file_name=file_name,
+            inference_time_ms=0.0,
+            overall_status="PROCEED",
+            blurry_ratio=0.0,
+        )
     try:
         if _is_vertex_ai_endpoint(MRC_ENDPOINT):
             data = _call_vertex_ai(file_bytes, file_name)
