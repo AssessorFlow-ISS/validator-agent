@@ -19,7 +19,7 @@ from validator_agent.pipeline.models import MrcResult
 
 logger = logging.getLogger(__name__)
 
-MRC_ENDPOINT = os.getenv("MRC_ENDPOINT", "https://asia-southeast1-aiplatform.googleapis.com/v1/projects/aflow-491809/locations/asia-southeast1/endpoints/mrc-endpoint-production:rawPredict")
+MRC_ENDPOINT = os.getenv("MRC_ENDPOINT", "")
 BLUR_THRESHOLD = float(os.getenv("MRC_BLUR_THRESHOLD", "0.30"))
 APP_MODE = os.getenv("APP_MODE", "dev")
 
