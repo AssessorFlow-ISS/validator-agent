@@ -55,7 +55,7 @@ class TestModelBrokerHttpAdapter:
             assert body["task_key"] == "validator.content_safety_reasoning"
             assert body["prompt"] == "Analyse this document for content safety"
             assert body["agent_id"] == "validator-agent"
-            assert body["max_tokens"] == 1024
+            assert body["max_tokens"] == 65536
             assert body["temperature"] == 0.2
 
     async def test_generate_sends_cheap_tier_task_key(

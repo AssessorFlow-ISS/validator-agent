@@ -22,6 +22,7 @@ def _make_adapter():
     adapter._agent_name = "validator-agent"
     adapter._project_id = "test-project"
     adapter._emulator_host = "localhost:18085"
+    adapter._topic_prefix = ""
     adapter._poll_tasks = []
 
     mock_publisher = MagicMock()
@@ -104,6 +105,7 @@ class TestPubSubSubscribe:
         payload = {"workflow_id": "wf-handler-test", "assessment_id": "a-1"}
         msg = MagicMock()
         msg.message.data = json.dumps(payload).encode("utf-8")
+        msg.message.publish_time = None
         msg.ack_id = "ack-1"
 
         pull_response = MagicMock()
@@ -137,13 +139,19 @@ class TestPubSubSubscribe:
             except (asyncio.CancelledError, Exception):
                 pass
 
-    async def test_nack_on_handler_error(self) -> None:
-        """Verify message is nacked when handler raises."""
+    async def test_ack_first_even_on_handler_error(self) -> None:
+        """Verify message is ACK'd before handler runs (ack-first pattern).
+
+        Shared AgentPubSubSubscriber ACKs immediately to prevent re-delivery
+        during long-running handlers (see shared/agent_subscriber.py line 279).
+        The handler still fires and logs the error, but the message is gone.
+        """
         adapter = _make_adapter()
 
         payload = {"workflow_id": "wf-nack"}
         msg = MagicMock()
         msg.message.data = json.dumps(payload).encode("utf-8")
+        msg.message.publish_time = None
         msg.ack_id = "ack-nack"
 
         pull_response = MagicMock()
@@ -166,12 +174,8 @@ class TestPubSubSubscribe:
 
         # Handler was called but failed
         handler.assert_called_once()
-        # Message should NOT be acked
-        adapter._subscriber.acknowledge.assert_not_called()
-        # Message should be nacked (modify_ack_deadline to 0)
-        adapter._subscriber.modify_ack_deadline.assert_called_once()
-        nack_args = adapter._subscriber.modify_ack_deadline.call_args[1]["request"]
-        assert nack_args["ack_deadline_seconds"] == 0
+        # Under ack-first pattern, message IS acked even when handler fails
+        adapter._subscriber.acknowledge.assert_called_once()
 
         for t in adapter._poll_tasks:
             t.cancel()

@@ -47,6 +47,20 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
+[tool.coverage.run]
+source = ["src/validator_agent"]
+omit = [
+    # Auto-generated gRPC stubs — regenerated from proto/, not hand-written
+    "src/validator_agent/_grpc/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/validator_agent"]
 
