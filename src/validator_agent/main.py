@@ -30,7 +30,6 @@ from af_shared.adapters.factory import get_tracing
 from validator_agent.api.routes import router
 from validator_agent.api.schemas import FileInfo, ValidationRequest
 from validator_agent.config import ValidatorConfig
-from validator_agent.domain.content_safety import ContentSafetyReasoner
 from validator_agent.domain.services import ValidatorService
 from validator_agent.domain.terminal_signal import TerminalSignalStatus
 from validator_agent.ports.material_validation_port import MaterialValidationPort
@@ -56,17 +55,17 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
     pool/channel shutdown.
     """
     # -- MRC adapter --------------------------------------------------------
-    mrc = StubMrcAdapter()
+    StubMrcAdapter()
 
     # -- OCR adapter --------------------------------------------------------
-    ocr = StubOcrAdapter()
+    StubOcrAdapter()
 
     # -- Model Broker adapter -----------------------------------------------
     if config.llm_provider == "stub":
-        model_broker = StubModelBrokerAdapter()
+        StubModelBrokerAdapter()
     elif config.llm_provider in ("http", "google_ai_studio", "vertex_ai"):
         from validator_agent.adapters.model_broker_http import ModelBrokerHttpAdapter
-        model_broker = ModelBrokerHttpAdapter()
+        ModelBrokerHttpAdapter()
         logger.info("using_real_model_broker", url=os.environ.get("MODEL_BROKER_URL", "localhost:8010"))
     else:
         raise ValueError(f"Unknown LLM_PROVIDER: {config.llm_provider}")

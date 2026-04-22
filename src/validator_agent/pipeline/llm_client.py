@@ -13,9 +13,8 @@ until Model Broker supports image payloads.
 from __future__ import annotations
 
 import contextvars
-import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 

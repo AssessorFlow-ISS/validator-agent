@@ -12,7 +12,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from validator_agent.pipeline.documentai_client import extract_with_documentai_bytes
-from validator_agent.pipeline.models import OcrResult, PageOcrResult
+from validator_agent.pipeline.models import OcrResult
 from validator_agent.pipeline.page_classifier import classify_page
 from validator_agent.pipeline.pdf_to_images import pdf_pages_to_images
 from validator_agent.pipeline.visual_understanding import process_visual_batch, process_visual_page

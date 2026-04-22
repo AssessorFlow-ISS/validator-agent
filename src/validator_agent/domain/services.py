@@ -545,11 +545,6 @@ class ValidatorService:
         safety_result = await asyncio.to_thread(check_content_safety, ocr_result.pages)
         safety_parts = []
         safety_parts.append(f"OpenAI Moderation pre-filter: {'FLAGGED' if safety_result.harmful_detected else 'PASSED'} (free)")
-        findings_count = (
-            len(safety_result.harmful_findings) + len(safety_result.pii_findings)
-            + len(safety_result.religious_political_findings) + len(safety_result.copyright_findings)
-            + len(safety_result.misinformation_findings)
-        )
         if hasattr(safety_result, 'harmful_findings'):
             safety_parts.append(
                 f"4 parallel analyzers: A({len(safety_result.harmful_findings)} harmful) "
@@ -805,7 +800,7 @@ class ValidatorService:
         Each step gets a computed timestamp based on cumulative latency from
         pipeline_start so the trace timeline shows sequential progression.
         """
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
 
         steps: list[dict] = []
         step_num = 0

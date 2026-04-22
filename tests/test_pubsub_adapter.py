@@ -12,7 +12,6 @@ import asyncio
 import json
 from unittest.mock import MagicMock, AsyncMock, patch
 
-import pytest
 
 
 def _make_adapter():

@@ -8,7 +8,6 @@ Prompt templates are loaded from ``prompts/`` YAML files (ADR-39).
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor
 
 from pydantic import BaseModel, Field

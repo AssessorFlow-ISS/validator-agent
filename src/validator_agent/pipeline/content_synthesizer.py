@@ -11,7 +11,6 @@ Prompt template loaded from ``prompts/content_synthesizer.yaml`` (ADR-39).
 from __future__ import annotations
 
 import json
-import os
 
 from pydantic import BaseModel, Field
 
