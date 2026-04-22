@@ -189,6 +189,7 @@ def create_app() -> FastAPI:
                         material_validation=material_validation,
                         assessment_id=assessment_id,
                         validation_type=validation_type,
+                        inline_materials=payload.get("materials"),
                     )
 
                     if not file_infos:
@@ -283,6 +284,7 @@ def create_app() -> FastAPI:
             material_validation=material_validation,
             assessment_id=assessment_id,
             validation_type=validation_type,
+            inline_materials=body.get("materials"),
         )
 
         if not file_infos:
@@ -334,6 +336,7 @@ async def _load_files_for_validation(
     material_validation: MaterialValidationPort,
     assessment_id: str,
     validation_type: str,
+    inline_materials: list[dict] | None = None,
 ) -> tuple[list[FileInfo], dict[str, str]]:
     """Fetch materials via Submission Service gRPC and map to FileInfo.
 
@@ -341,6 +344,20 @@ async def _load_files_for_validation(
     the caller write a per-material decision back via
     ``UpdateMaterialValidation`` after ``ValidatorService.validate``
     returns.
+
+    If ``inline_materials`` is non-empty the gRPC path is skipped and the
+    ``FileInfo`` list is built directly from the trigger payload. This
+    supports the af-llmsecops Depth-2 DeepTeam driver, which publishes
+    ``materials[].gcs_path`` inside the fixture payload rather than
+    seeding the ``assessment_configs`` + ``assessment_materials`` rows a
+    real orchestrator run would already have created. Each entry must
+    carry either a ``gcs_path`` (``gs://bucket/path.pdf``) or a
+    ``storage_path``; optional ``blob_id`` / ``material_id`` populate
+    the ``file_to_material_id`` mapping so ``UpdateMaterialValidation``
+    still gets a per-material write when the DB has a matching row.
+
+    Inline materials take precedence over gRPC lookup; when neither
+    yields anything the caller raises ``NO_MATERIALS`` as before.
     """
     upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
     # Phase 5 (web_research_validation) only processes new web-research
@@ -351,6 +368,38 @@ async def _load_files_for_validation(
 
     file_infos: list[FileInfo] = []
     file_to_material_id: dict[str, str] = {}
+
+    # -- Inline-materials fast path (fixture-driven; no gRPC round-trip) --
+    if inline_materials:
+        for entry in inline_materials:
+            if not isinstance(entry, dict):
+                continue
+            gcs_path = (
+                entry.get("gcs_path")
+                or entry.get("storage_path")
+                or ""
+            )
+            if not gcs_path:
+                continue
+            file_name = entry.get("file_name") or os.path.basename(gcs_path)
+            file_type = entry.get("file_type") or "pdf"
+            file_infos.append(
+                FileInfo(
+                    file_name=file_name,
+                    storage_path=gcs_path,
+                    file_type=file_type,
+                )
+            )
+            material_id = entry.get("material_id") or entry.get("blob_id")
+            if material_id:
+                file_to_material_id[file_name] = material_id
+        logger.info(
+            "inline_materials_resolved",
+            assessment_id=assessment_id,
+            count=len(file_infos),
+        )
+        return file_infos, file_to_material_id
+
     try:
         # unvalidated_only=true skips previously-PROCEEDED materials so
         # we don't re-run the pipeline on them (mirrors the old
