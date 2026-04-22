@@ -29,21 +29,3 @@ jobs:
     with:
       target_agent: validator-agent
     secrets: inherit
-
-
-  # Auto-release on green CI — dispatches IaC_Smoke/release-service.yml
-  # with this agent's service key. Gated on push to feat/thet-integration;
-  # skipped on PR / workflow_dispatch. image_tag=latest assumes the image
-  # already exists in Artifact Registry.
-  dispatch-release:
-    name: create cloud deploy release
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/thet-integration' && success()
-    needs: [validator-agent-llmsecops]
-    uses: assessorflow/IaC_Smoke/.github/workflows/release-service.yml@feat/thet-integration
-    permissions:
-      contents: read
-      id-token: write
-    with:
-      service: validator
-      image_tag: latest
-    secrets: inherit
