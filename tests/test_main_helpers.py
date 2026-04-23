@@ -329,6 +329,64 @@ class TestTriggerEndpoint:
         assert body["file_results"] == []
         assert body["source_agent"] == "validator-agent"
 
+    def test_trigger_skips_terminate_on_stale_retrigger(
+        self, _reset_workflow_env, monkeypatch
+    ) -> None:
+        # Force the stub material adapter (default is grpc when env unset
+        # the way our prod deploy reads it).
+        monkeypatch.setenv("MATERIAL_ADAPTER", "stub")
+        """When all materials carry readiness_status != NULL (already
+        validated by a prior run), a duplicate trigger must NOT emit
+        TERMINATE NO_MATERIALS — that would kill an in-flight downstream
+        phase. Production repro: WF-9F1CF1 + WF-18AF1C.
+
+        Returns STALE_RETRIGGER status with reason_code ALREADY_VALIDATED
+        instead, which the orchestrator treats as a no-op.
+        """
+        from validator_agent.adapters.material_validation_stub import (
+            StubMaterialValidationAdapter,
+        )
+        from validator_agent.ports.material_validation_port import Material
+
+        seeded_materials = [
+            Material(
+                material_id="m-already-validated",
+                file_name="scrum.pdf",
+                file_type="pdf",
+                storage_path="gs://bucket/scrum.pdf",
+                readiness_status="PROCEED",
+                source="upload",
+                source_url="",
+            ),
+        ]
+
+        original_init = StubMaterialValidationAdapter.__init__
+
+        def patched_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            original_init(self, *args, **kwargs)
+            if not self.materials:
+                self.materials = list(seeded_materials)
+
+        monkeypatch.setattr(
+            StubMaterialValidationAdapter, "__init__", patched_init
+        )
+
+        app = create_app()
+        client = TestClient(app)
+        resp = client.post(
+            "/trigger",
+            json={
+                "workflow_id": "wf-stale",
+                "assessment_id": "assess-stale",
+                "validation_type": "material_validation",
+            },
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["terminal_signal"]["status"] == "STALE_RETRIGGER"
+        assert body["terminal_signal"]["reason_code"] == "ALREADY_VALIDATED"
+        assert body["file_results"] == []
+
     def test_trigger_with_inline_materials_runs_pipeline(
         self, _reset_workflow_env
     ) -> None:

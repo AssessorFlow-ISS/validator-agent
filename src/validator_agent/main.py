@@ -193,6 +193,27 @@ def create_app() -> FastAPI:
                     )
 
                     if not file_infos:
+                        # Stale re-trigger detector: distinguish "truly no
+                        # materials in the assessment" (legitimate TERMINATE)
+                        # from "all materials already validated by a prior
+                        # run" (stale Pub/Sub redelivery — see WF-9F1CF1 +
+                        # WF-18AF1C). _load_files_for_validation filters by
+                        # unvalidated_only=True for material_validation, so
+                        # 0 file_infos can mean either case. A second
+                        # get_materials() WITHOUT the filter disambiguates.
+                        is_stale_retrigger = await _all_materials_already_validated(
+                            material_validation=material_validation,
+                            assessment_id=assessment_id,
+                            validation_type=validation_type,
+                        )
+                        if is_stale_retrigger:
+                            logger.warning(
+                                "validation_trigger_skipped_stale",
+                                workflow_id=workflow_id,
+                                assessment_id=assessment_id,
+                                reason="materials already validated; suppressing duplicate TERMINATE",
+                            )
+                            return
                         logger.error("no_materials_found", assessment_id=assessment_id)
                         await event_publisher.publish(
                             topic="assessorflow.validation.complete",
@@ -288,6 +309,29 @@ def create_app() -> FastAPI:
         )
 
         if not file_infos:
+            is_stale_retrigger = await _all_materials_already_validated(
+                material_validation=material_validation,
+                assessment_id=assessment_id,
+                validation_type=validation_type,
+            )
+            if is_stale_retrigger:
+                logger.warning(
+                    "validation_trigger_skipped_stale",
+                    workflow_id=workflow_id,
+                    assessment_id=assessment_id,
+                    reason="materials already validated; suppressing duplicate TERMINATE",
+                )
+                return {
+                    "workflow_id": workflow_id,
+                    "assessment_id": assessment_id,
+                    "terminal_signal": {
+                        "status": "STALE_RETRIGGER",
+                        "reason_code": "ALREADY_VALIDATED",
+                        "message": "All materials already validated by a prior run",
+                    },
+                    "file_results": [],
+                    "source_agent": "validator-agent",
+                }
             return {
                 "workflow_id": workflow_id,
                 "assessment_id": assessment_id,
@@ -440,6 +484,50 @@ async def _load_files_for_validation(
             file_to_material_id[material.file_name] = material.material_id
 
     return file_infos, file_to_material_id
+
+
+async def _all_materials_already_validated(
+    *,
+    material_validation: MaterialValidationPort,
+    assessment_id: str,
+    validation_type: str,
+) -> bool:
+    """Distinguish stale Pub/Sub re-trigger from truly-no-materials.
+
+    ``_load_files_for_validation`` filters by ``unvalidated_only=True`` for
+    ``material_validation``, so an empty file_infos result can mean either:
+      (a) The assessment genuinely has no materials registered → legitimate
+          NO_MATERIALS TERMINATE.
+      (b) Every material has already been validated by an earlier run and
+          carries ``readiness_status != NULL`` → stale Pub/Sub redelivery
+          re-firing the validation trigger; TERMINATE here would kill an
+          in-flight downstream phase (see WF-9F1CF1, WF-18AF1C).
+
+    A second ``get_materials`` without the unvalidated filter disambiguates:
+    if any materials exist for this assessment + scope, it's case (b).
+
+    Returns ``True`` for case (b) so the caller can short-circuit without
+    publishing TERMINATE. Fails CLOSED to ``False`` on adapter errors so we
+    preserve the legacy NO_MATERIALS path on uncertainty.
+    """
+    source_filter = (
+        "web_research" if validation_type == "web_research_validation" else None
+    )
+    try:
+        all_materials = await material_validation.get_materials(
+            assessment_id=assessment_id,
+            unvalidated_only=False,
+            source=source_filter,
+        )
+    except Exception:
+        logger.error(
+            "stale_retrigger_check_failed",
+            assessment_id=assessment_id,
+            validation_type=validation_type,
+            exc_info=True,
+        )
+        return False
+    return len(all_materials) > 0
 
 
 # -- UpdateMaterialValidation helpers -----------------------------------
