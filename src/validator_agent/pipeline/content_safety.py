@@ -92,18 +92,35 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
     # ── Stage 2: 4 Parallel LLM Analyzers ────
     analyzer_results = run_all_analyzers(pages)
 
-    # Check if all analyzers failed
+    # Tally analyzer error state. Surfaced on the result so the validator
+    # summary can distinguish "0 findings (all clean)" from "0 findings (all
+    # errored)" — see WF-3257BB (2026-04-24): Google AI Studio key was dead
+    # so all 4 analyzers errored, but the user-facing summary read like a
+    # clean pass.
+    analyzer_list = [
+        analyzer_results.analyzer_a, analyzer_results.analyzer_b,
+        analyzer_results.analyzer_c, analyzer_results.analyzer_d,
+    ]
+    error_count = sum(1 for r in analyzer_list if r.error is not None)
+    error_messages = [r.error for r in analyzer_list if r.error is not None]
+
     all_failed = all(
         result.error is not None and not result.findings
-        for result in [analyzer_results.analyzer_a, analyzer_results.analyzer_b, analyzer_results.analyzer_c, analyzer_results.analyzer_d]
+        for result in analyzer_list
     )
     if all_failed:
+        # Include the upstream error in the termination detail so the
+        # operator sees WHY (e.g. "API key not valid") instead of just
+        # CONTENT_SAFETY_UNAVAILABLE.
+        first_error = error_messages[0] if error_messages else "unknown"
         return ContentSafetyResult(
             overall_status="TERMINATE",
             termination_reason="CONTENT_SAFETY_UNAVAILABLE",
-            termination_detail="All 4 content safety analyzers failed — cannot verify content is safe",
-            error_message="All content safety analyzers failed — cannot verify content safety",
+            termination_detail=f"All 4 content safety analyzers errored — first error: {first_error[:200]}",
+            error_message=f"All content safety analyzers failed — first: {first_error[:200]}",
             cleaned_text="",
+            analyzer_error_count=error_count,
+            analyzer_error_messages=error_messages[:4],
         )
 
     # ── Synthesizer ────
@@ -137,6 +154,8 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
             misinformation_detected=bool(misinformation_findings),
             misinformation_findings=misinformation_findings,
             cleaned_text="",
+            analyzer_error_count=error_count,
+            analyzer_error_messages=error_messages[:4],
         )
 
     # Hard gate 2: Religious/Political → TERMINATE
@@ -155,6 +174,8 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
             misinformation_detected=bool(misinformation_findings),
             misinformation_findings=misinformation_findings,
             cleaned_text="",
+            analyzer_error_count=error_count,
+            analyzer_error_messages=error_messages[:4],
         )
 
     # Apply PII redactions
@@ -200,4 +221,6 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
         cleaned_text=cleaned_text,
         assessor_action_required=has_soft_warnings,
         assessor_warnings=assessor_warnings,
+        analyzer_error_count=error_count,
+        analyzer_error_messages=error_messages[:4],
     )

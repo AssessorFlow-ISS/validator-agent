@@ -546,12 +546,28 @@ class ValidatorService:
         safety_parts = []
         safety_parts.append(f"OpenAI Moderation pre-filter: {'FLAGGED' if safety_result.harmful_detected else 'PASSED'} (free)")
         if hasattr(safety_result, 'harmful_findings'):
-            safety_parts.append(
-                f"4 parallel analyzers: A({len(safety_result.harmful_findings)} harmful) "
-                f"B({len(safety_result.misinformation_findings)} misinfo) "
-                f"C({len(safety_result.pii_findings)} PII, {len(safety_result.copyright_findings)} copyright) "
-                f"D({len(safety_result.religious_political_findings)} political)"
-            )
+            # WF-3257BB (2026-04-24): when analyzers ERROR, the *_findings lists
+            # are empty and the old "0 harmful / 0 misinfo / ..." summary read
+            # like a clean pass — completely hiding the upstream LLM auth
+            # failure. Surface error count first so the operator sees the real
+            # status before any zero-count noise.
+            error_count = getattr(safety_result, 'analyzer_error_count', 0)
+            if error_count:
+                first_err = ""
+                msgs = getattr(safety_result, 'analyzer_error_messages', [])
+                if msgs:
+                    first_err = f" — first: {msgs[0][:120]}"
+                safety_parts.append(
+                    f"⚠ {error_count}/4 analyzers ERRORED{first_err}"
+                )
+            if error_count < 4:
+                safety_parts.append(
+                    f"{4 - error_count} analyzers ran: "
+                    f"A({len(safety_result.harmful_findings)} harmful) "
+                    f"B({len(safety_result.misinformation_findings)} misinfo) "
+                    f"C({len(safety_result.pii_findings)} PII, {len(safety_result.copyright_findings)} copyright) "
+                    f"D({len(safety_result.religious_political_findings)} political)"
+                )
         safety_summary = ". ".join(safety_parts)
         await self._write_progress_event(workflow_id, "assessorflow.validation.safety-complete", safety_summary)
         await self._tracing.trace_tool_call(
