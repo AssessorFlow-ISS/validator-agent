@@ -14,7 +14,6 @@ from validator_agent.adapters.knowledge_service_http import (
     KnowledgeServiceHttpAdapter,
 )
 
-
 _BASE_URL = "http://test-knowledge:8020"
 _POST_URL = f"{_BASE_URL}/api/v1/internal/process-material"
 

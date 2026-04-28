@@ -1,0 +1,70 @@
+version: "3"
+
+vars:
+  PYTHON: python3.12
+  APP_MODULE: validator_agent.main:app
+  APP_PORT: "8080"
+  SHARED_PATH: "{{default \"../shared\" .SHARED_PATH}}"
+  COV_FAIL_UNDER: "80"
+  IMAGE_TAG: "{{default \"validator-agent:test\" .IMAGE_TAG}}"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  install:
+    desc: Install dependencies and optional shared package
+    cmds:
+      - uv sync --all-extras --dev
+      - |
+        if [ -d "{{.SHARED_PATH}}" ]; then
+          uv pip install -e "{{.SHARED_PATH}}"
+        fi
+
+  lint:
+    desc: Run ruff check and format check
+    cmds:
+      - uv run ruff check src/ tests/
+      - uv run ruff format --check src/ tests/
+
+  type-check:
+    desc: Run mypy on source
+    cmds:
+      - uv run mypy src/.
+
+  test:
+    desc: Run tests with coverage
+    cmds:
+      - uv run pytest tests/ -v --cov=validator_agent --cov-report=xml --cov-fail-under={{.COV_FAIL_UNDER}}
+
+  integration:
+    desc: Run integration smoke tests
+    cmds:
+      - uv run pytest tests/ -v
+
+  security:
+    desc: Run pip-audit
+    cmds:
+      - uv export --no-dev --no-emit-project > requirements.txt
+      - uv run pip-audit --requirement=requirements.txt --desc
+
+  container-build:
+    desc: Build container image from Containerfile
+    cmds:
+      - |
+        if [ -d "{{.SHARED_PATH}}" ]; then
+          docker build --file Containerfile --tag {{.IMAGE_TAG}} --build-context shared={{.SHARED_PATH}} .
+        else
+          docker build --file Containerfile --tag {{.IMAGE_TAG}} .
+        fi
+
+  run:
+    desc: Start the app locally
+    cmds:
+      - uv run uvicorn {{.APP_MODULE}} --host 0.0.0.0 --port {{.APP_PORT}}
+
+  ci:
+    desc: Run lint, type-check, and test (CI parity)
+    deps: [lint, type-check, test]

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-
 from validator_agent.adapters.material_validation_grpc import (
     GrpcMaterialValidationAdapter,
     _from_proto_material,

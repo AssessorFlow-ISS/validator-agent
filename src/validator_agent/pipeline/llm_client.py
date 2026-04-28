@@ -17,7 +17,6 @@ import os
 from dataclasses import dataclass
 
 import httpx
-
 from af_shared.utils.schema_compat import clean_for_gemini
 
 MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "")

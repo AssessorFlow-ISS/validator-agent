@@ -12,7 +12,6 @@ import pytest
 
 from validator_agent.adapters.model_broker_http import ModelBrokerHttpAdapter
 
-
 _BROKER_URL = "http://test-broker:8010"
 _GENERATE_URL = f"{_BROKER_URL}/api/v1/generate"
 

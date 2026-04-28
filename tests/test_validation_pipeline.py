@@ -317,7 +317,7 @@ class TestDecisionAuditLogging:
         await service.validate(_make_request())
 
         assert len(da_ref.entries) == 1
-        assert da_ref.entries[0].payload["output_summary"]["terminal_signal"]["status"] == "TERMINATE"
+        assert da_ref.entries[0].payload["output"]["terminal_signal"]["status"] == "TERMINATE"
 
     async def test_audit_contains_reasoning_steps(self) -> None:
         da = StubDecisionAuditAdapter()
@@ -345,9 +345,9 @@ class TestDecisionAuditLogging:
         await service.validate(_make_request())
 
         payload = da_ref.entries[0].payload
-        assert "output_summary" in payload
-        assert payload["output_summary"]["terminal_signal"]["status"] == "PROCEED"
-        assert payload["output_summary"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
+        assert "output" in payload
+        assert payload["output"]["terminal_signal"]["status"] == "PROCEED"
+        assert payload["output"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
 
 
 class TestStorageDownload:

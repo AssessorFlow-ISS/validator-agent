@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from af_shared.pubsub.agent_subscriber import AgentPubSubSubscriber
+
 from validator_agent.ports.event_publisher_port import EventPublisherPort
 
 

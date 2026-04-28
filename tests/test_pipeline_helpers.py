@@ -10,10 +10,12 @@ from unittest.mock import MagicMock, patch
 
 from validator_agent.pipeline import (
     content_analyzers,
-    content_safety as cs_mod,
     content_synthesizer,
     moderation_prefilter,
     page_classifier,
+)
+from validator_agent.pipeline import (
+    content_safety as cs_mod,
 )
 from validator_agent.pipeline.content_analyzers import (
     AllAnalyzerResults,

@@ -23,17 +23,28 @@ jobs:
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Checkout shared dependency
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: assessorflow/shared
+          path: shared
+          token: ${{ secrets.INTEGRATION_REPO_PAT }}
+          persist-credentials: false
 
       - name: Authenticate to GCP
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@f3d8f11d8d7f8aaf7a4d4a95f46b17dfec2a0573 # v3.0.0
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Setup gcloud with docker credential helper
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@48cb44c0fa2f86f7ef6ad8120d2f83f62440ac4f # v3.0.1
 
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ vars.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev --quiet
@@ -43,7 +54,7 @@ jobs:
         run: echo "token=$(gcloud auth print-access-token | tr -d '\n')" >> $GITHUB_OUTPUT
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
 
       - name: Determine image tag
         id: tag
@@ -55,10 +66,12 @@ jobs:
           fi
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
-          file: ./Dockerfile
+          file: ./Containerfile
+          build-contexts: |
+            shared=./shared
           push: true
           build-args: |
             PIP_EXTRA_INDEX_URL=https://oauth2accesstoken:${{ steps.python-token.outputs.token }}@${{ vars.ARTIFACT_REGISTRY_REGION }}-python.pkg.dev/${{ vars.GCP_PROJECT_ID }}/python-shared/simple/

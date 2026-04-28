@@ -21,8 +21,13 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from datetime import UTC
 
 import structlog
+
+# Shared ports and models from af-shared (B3 unification)
+from af_shared.models.domain import DecisionLogEntry
+from af_shared.ports.tracing import TracingPort
 
 from validator_agent.api.schemas import (
     FileInfo,
@@ -39,10 +44,6 @@ from validator_agent.ports.decision_audit_port import DecisionAuditPort
 from validator_agent.ports.event_publisher_port import EventPublisherPort
 from validator_agent.ports.knowledge_service_port import KnowledgeServicePort
 from validator_agent.ports.storage_port import StoragePort
-
-# Shared ports and models from af-shared (B3 unification)
-from af_shared.models.domain import DecisionLogEntry
-from af_shared.ports.tracing import TracingPort
 
 logger = structlog.get_logger(__name__)
 
@@ -100,9 +101,9 @@ class ValidatorService:
 
     async def validate(self, request: ValidationRequest) -> ValidationResponse:
         """Run the full validation pipeline for all files in the request."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        pipeline_start = datetime.now(timezone.utc)
+        pipeline_start = datetime.now(UTC)
         file_results: list[FileResult] = []
         all_cleaned_text: list[str] = []
         all_warnings: list[dict] = []
@@ -343,9 +344,9 @@ class ValidatorService:
         MRC (blur detection) or OCR on text is meaningless. We read the text
         directly and run content safety.
         """
-        from validator_agent.pipeline.models import ValidatorResult
         from validator_agent.pipeline.content_safety import check_content_safety
         from validator_agent.pipeline.llm_client import set_workflow_context
+        from validator_agent.pipeline.models import ValidatorResult
 
         set_workflow_context(workflow_id)
         start_ms = time.time() * 1000
@@ -412,10 +413,10 @@ class ValidatorService:
         workflow_id: str,
     ) -> object:
         """Run each pipeline component individually, emitting progress events."""
+        from validator_agent.pipeline.content_safety import check_content_safety
         from validator_agent.pipeline.models import ValidatorResult
         from validator_agent.pipeline.mrc_client import check_readability
         from validator_agent.pipeline.ocr_pipeline import extract_text
-        from validator_agent.pipeline.content_safety import check_content_safety
 
         start_ms = time.time() * 1000
 
@@ -1122,7 +1123,7 @@ class ValidatorService:
             agent_name="validator-agent",
             decision_type="content_validation",
             assessor_id=request.assessor_id,
-            input_summary={
+            input={
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],
                 "phase": "Phase 3: Material Validation",
@@ -1132,7 +1133,7 @@ class ValidatorService:
                     "content-analyzers-x4", "content-synthesizer",
                 ],
             },
-            output_summary={
+            output={
                 "terminal_signal": overall_signal.model_dump(),
                 "files_validated": len(file_results),
                 "files_passed": sum(

@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
+from af_shared.adapters.factory import get_tracing
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -26,7 +27,6 @@ from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
 from validator_agent.adapters.storage_stub import StubStorageAdapter
-from af_shared.adapters.factory import get_tracing
 from validator_agent.api.routes import router
 from validator_agent.api.schemas import FileInfo, ValidationRequest
 from validator_agent.config import ValidatorConfig

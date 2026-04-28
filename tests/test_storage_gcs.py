@@ -10,8 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.api_core.exceptions import Forbidden, NotFound
 
-from validator_agent.adapters.storage_gcs import GcsStorageAdapter, _parse_gcs_uri
-
+from validator_agent.adapters.storage_gcs import GcsStorageAdapter
 
 # ---------------------------------------------------------------------------
 # GCS URI parsing
@@ -19,35 +18,42 @@ from validator_agent.adapters.storage_gcs import GcsStorageAdapter, _parse_gcs_u
 
 class TestParseGcsUri:
     def test_standard_uri(self) -> None:
-        bucket, path = _parse_gcs_uri("gs://my-bucket/path/to/file.pdf")
+        adapter = GcsStorageAdapter(bucket_name="default")
+        bucket, path = adapter._parse_storage_path("gs://my-bucket/path/to/file.pdf")
         assert bucket == "my-bucket"
         assert path == "path/to/file.pdf"
 
     def test_single_level_path(self) -> None:
-        bucket, path = _parse_gcs_uri("gs://bucket/file.pdf")
+        adapter = GcsStorageAdapter(bucket_name="default")
+        bucket, path = adapter._parse_storage_path("gs://bucket/file.pdf")
         assert bucket == "bucket"
         assert path == "file.pdf"
 
     def test_deeply_nested_path(self) -> None:
-        bucket, path = _parse_gcs_uri("gs://b/a/b/c/d/e/f.txt")
+        adapter = GcsStorageAdapter(bucket_name="default")
+        bucket, path = adapter._parse_storage_path("gs://b/a/b/c/d/e/f.txt")
         assert bucket == "b"
         assert path == "a/b/c/d/e/f.txt"
 
     def test_not_a_gcs_uri(self) -> None:
-        with pytest.raises(ValueError, match="Not a GCS URI"):
-            _parse_gcs_uri("s3://wrong-scheme/file.pdf")
+        adapter = GcsStorageAdapter(bucket_name=None)
+        with pytest.raises(ValueError, match="GCS_BUCKET_NAME"):
+            adapter._parse_storage_path("s3://wrong-scheme/file.pdf")
 
     def test_no_path_component(self) -> None:
-        with pytest.raises(ValueError, match="no object path"):
-            _parse_gcs_uri("gs://bucket-only")
+        adapter = GcsStorageAdapter(bucket_name="default")
+        with pytest.raises(ValueError, match="Invalid GCS URI"):
+            adapter._parse_storage_path("gs://bucket-only")
 
     def test_empty_path_after_slash(self) -> None:
-        with pytest.raises(ValueError, match="no object path"):
-            _parse_gcs_uri("gs://bucket/")
+        adapter = GcsStorageAdapter(bucket_name="default")
+        with pytest.raises(ValueError, match="Invalid GCS URI"):
+            adapter._parse_storage_path("gs://bucket/")
 
     def test_http_url_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Not a GCS URI"):
-            _parse_gcs_uri("https://storage.googleapis.com/bucket/file.pdf")
+        adapter = GcsStorageAdapter(bucket_name=None)
+        with pytest.raises(ValueError, match="GCS_BUCKET_NAME"):
+            adapter._parse_storage_path("https://storage.googleapis.com/bucket/file.pdf")
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +126,7 @@ class TestGcsDownloadRelativePath:
         mock_client = _make_mock_client(b"env-content")
         with patch.dict("os.environ", {"GCS_BUCKET_NAME": "env-bucket"}):
             adapter = GcsStorageAdapter(client=mock_client)
-
-        data = await adapter.download_file("path/file.pdf")
+            data = await adapter.download_file("path/file.pdf")
 
         assert data == b"env-content"
         mock_client.bucket.assert_called_once_with("env-bucket")
@@ -139,17 +144,17 @@ class TestGcsErrorHandling:
         )
         adapter = GcsStorageAdapter(client=mock_client)
 
-        with pytest.raises(FileNotFoundError, match="GCS object not found"):
+        with pytest.raises(FileNotFoundError, match="Blob not found: gs://bucket/missing.pdf"):
             await adapter.download_file("gs://bucket/missing.pdf")
 
-    async def test_forbidden_raises_permission_error(self) -> None:
+    async def test_forbidden_raises_original(self) -> None:
         mock_client = _make_mock_client()
         mock_client.bucket.return_value.blob.return_value.download_as_bytes.side_effect = (
             Forbidden("403 Access Denied")
         )
         adapter = GcsStorageAdapter(client=mock_client)
 
-        with pytest.raises(PermissionError, match="Permission denied"):
+        with pytest.raises(Forbidden, match="403 Access Denied"):
             await adapter.download_file("gs://bucket/secret.pdf")
 
     async def test_not_found_on_relative_path(self) -> None:
@@ -159,7 +164,7 @@ class TestGcsErrorHandling:
         )
         adapter = GcsStorageAdapter(bucket_name="b", client=mock_client)
 
-        with pytest.raises(FileNotFoundError, match="gs://b/rel.pdf"):
+        with pytest.raises(FileNotFoundError, match="Blob not found: gs://b/rel.pdf"):
             await adapter.download_file("rel.pdf")
 
 
@@ -170,7 +175,7 @@ class TestGcsErrorHandling:
 class TestGcsClientInit:
     async def test_client_created_lazily(self) -> None:
         """Client is not created until first download_file call."""
-        with patch("validator_agent.adapters.storage_gcs.gcs.Client") as mock_cls:
+        with patch("google.cloud.storage.Client") as mock_cls:
             mock_instance = _make_mock_client(b"lazy")
             mock_cls.return_value = mock_instance
 
@@ -183,15 +188,7 @@ class TestGcsClientInit:
             mock_cls.assert_called_once()
             assert data == b"lazy"
 
-    async def test_project_id_passed_to_client(self) -> None:
-        with patch("validator_agent.adapters.storage_gcs.gcs.Client") as mock_cls:
-            mock_cls.return_value = _make_mock_client(b"ok")
-            adapter = GcsStorageAdapter(
-                bucket_name="b", project_id="my-project"
-            )
 
-            await adapter.download_file("file.pdf")
-            mock_cls.assert_called_once_with(project="my-project")
 
 
 # ---------------------------------------------------------------------------

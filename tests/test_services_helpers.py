@@ -4,8 +4,7 @@ These are pure functions over pipeline results, so no adapters are required.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
+from datetime import UTC, datetime
 
 from validator_agent.api.schemas import FileInfo, FileResult
 from validator_agent.domain.services import ValidatorService
@@ -23,7 +22,6 @@ from validator_agent.pipeline.models import (
     PageOcrResult,
     ValidatorResult,
 )
-
 
 FILE_INFO = FileInfo(file_name="doc.pdf", storage_path="doc.pdf", file_type="pdf")
 
@@ -136,7 +134,7 @@ def _result(
 
 class TestBuildReasoningStepsMrc:
     def test_mrc_only_proceed_with_timestamp(self) -> None:
-        start = datetime(2026, 4, 22, 12, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 4, 22, 12, 0, 0, tzinfo=UTC)
         res = _result(mrc=_mrc())
         steps = ValidatorService._build_reasoning_steps(FILE_INFO, res, pipeline_start=start)
         assert steps[0]["component"] == "mrc"

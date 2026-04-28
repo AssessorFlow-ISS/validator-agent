@@ -7,12 +7,11 @@ logging.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-
-from collections.abc import Callable
 
 from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapter
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
@@ -320,9 +319,9 @@ class TestDecisionAuditLogging:
 
         # Payload must contain terminal_signal
         payload = entry.payload
-        assert "output_summary" in payload
-        assert payload["output_summary"]["terminal_signal"]["status"] == "PROCEED"
-        assert payload["output_summary"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
+        assert "output" in payload
+        assert payload["output"]["terminal_signal"]["status"] == "PROCEED"
+        assert payload["output"]["terminal_signal"]["reason_code"] == "VALIDATION_PASSED"
 
         # Payload must contain reasoning_steps (non-empty list of dicts with per-file data)
         assert "reasoning_steps" in payload
@@ -336,9 +335,9 @@ class TestDecisionAuditLogging:
         assert "prompt_version" in payload
         assert payload["prompt_version"].startswith("validator/thet-pipeline@v")
 
-        # Payload must include agent_name and phase (phase lives in input_summary)
+        # Payload must include agent_name and phase (phase lives in input)
         assert payload["agent_name"] == "validator-agent"
-        assert payload["input_summary"]["phase"] == "Phase 3: Material Validation"
+        assert payload["input"]["phase"] == "Phase 3: Material Validation"
 
     async def test_terminate_audit_records_terminate_signal(self) -> None:
         """TERMINATE outcomes must also be logged with correct terminal_signal."""
@@ -349,8 +348,8 @@ class TestDecisionAuditLogging:
 
         assert len(da_ref.entries) == 1
         payload = da_ref.entries[0].payload
-        assert payload["output_summary"]["terminal_signal"]["status"] == "TERMINATE"
-        assert payload["output_summary"]["terminal_signal"]["reason_code"] == "BLURRY_UNREADABLE"
+        assert payload["output"]["terminal_signal"]["status"] == "TERMINATE"
+        assert payload["output"]["terminal_signal"]["reason_code"] == "BLURRY_UNREADABLE"
 
 
 # ===========================================================================
@@ -534,7 +533,7 @@ class TestMultiFilePartialTerminate:
         """
         request, files = _make_multi_file_request()
 
-        def _per_file_pipeline(file_bytes: bytes, file_name: str) -> "ValidatorResult":
+        def _per_file_pipeline(file_bytes: bytes, file_name: str) -> ValidatorResult:
             """MRC fails for file 2 only."""
             if file_name == "document_2.pdf":
                 return make_stub_pipeline(
@@ -570,7 +569,7 @@ class TestMultiFilePartialTerminate:
             "and weapon details that are dangerous."
         )
 
-        def _per_file_pipeline(file_bytes: bytes, file_name: str) -> "ValidatorResult":
+        def _per_file_pipeline(file_bytes: bytes, file_name: str) -> ValidatorResult:
             """File 1 blurry, file 2 harmful, file 3 clean."""
             if file_name == "document_1.pdf":
                 return make_stub_pipeline(
@@ -627,7 +626,7 @@ class TestMultiFilePartialTerminate:
         payload = da_ref.entries[0].payload
 
         # Overall terminal_signal in audit must be TERMINATE
-        assert payload["output_summary"]["terminal_signal"]["status"] == "TERMINATE"
+        assert payload["output"]["terminal_signal"]["status"] == "TERMINATE"
 
         # Reasoning steps now contain per-component detail for all 3 files
         steps = payload["reasoning_steps"]

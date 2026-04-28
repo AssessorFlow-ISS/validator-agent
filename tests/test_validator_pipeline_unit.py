@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-
 from validator_agent.pipeline.models import (
     ContentSafetyResult,
     MrcPageResult,

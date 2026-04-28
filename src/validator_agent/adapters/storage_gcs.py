@@ -37,13 +37,13 @@ class GcsStorageAdapter(StoragePort):
     def __init__(
         self,
         bucket_name: str | None = None,
-        client: "Client | None" = None,
+        client: Client | None = None,
     ) -> None:
         """Initialize the GCS storage adapter."""
         self._default_bucket = bucket_name or os.getenv("GCS_BUCKET_NAME")
         self._client = client
 
-    def _get_client(self) -> "Client":
+    def _get_client(self) -> Client:
         """Get or create the GCS client."""
         if self._client is None:
             from google.cloud import storage

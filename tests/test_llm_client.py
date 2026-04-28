@@ -36,7 +36,7 @@ class TestContextAndStats:
 
 class TestCallModelBroker:
     def test_routes_via_httpx_with_body_fields(
-        self, monkeypatch: "pytest.MonkeyPatch"  # noqa: F821
+        self, monkeypatch: pytest.MonkeyPatch  # noqa: F821
     ) -> None:
         monkeypatch.setattr(llm_mod, "MODEL_BROKER_URL", "http://broker")
         fake_response = MagicMock()
@@ -93,7 +93,7 @@ class TestCallModelBroker:
 
 class TestGenerateRouting:
     def test_generate_prefers_model_broker_when_url_set(
-        self, monkeypatch: "pytest.MonkeyPatch"  # noqa: F821
+        self, monkeypatch: pytest.MonkeyPatch  # noqa: F821
     ) -> None:
         monkeypatch.setattr(llm_mod, "MODEL_BROKER_URL", "http://broker")
         stub = MagicMock(
@@ -107,7 +107,7 @@ class TestGenerateRouting:
         assert resp.content == "OK"
 
     def test_generate_falls_back_to_openai_when_no_url(
-        self, monkeypatch: "pytest.MonkeyPatch"  # noqa: F821
+        self, monkeypatch: pytest.MonkeyPatch  # noqa: F821
     ) -> None:
         monkeypatch.setattr(llm_mod, "MODEL_BROKER_URL", "")
         fallback = MagicMock(return_value=llm_mod.LlmResponse(content="local"))
@@ -119,7 +119,7 @@ class TestGenerateRouting:
 
 class TestOpenAIDirect:
     def test_missing_api_key_returns_empty_json(
-        self, monkeypatch: "pytest.MonkeyPatch"  # noqa: F821
+        self, monkeypatch: pytest.MonkeyPatch  # noqa: F821
     ) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         resp = llm_mod._call_openai_direct(
@@ -134,7 +134,7 @@ class TestOpenAIDirect:
         assert resp.content == "{}"
         assert resp.model_used == "no-key"
 
-    def test_with_api_key_uses_client(self, monkeypatch: "pytest.MonkeyPatch") -> None:  # noqa: F821
+    def test_with_api_key_uses_client(self, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F821
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
         fake_choice = MagicMock()
@@ -168,7 +168,7 @@ class TestOpenAIDirect:
         assert kwargs["response_format"] == {"type": "json_object"}
 
     def test_openai_none_content_returns_empty_object_literal(
-        self, monkeypatch: "pytest.MonkeyPatch"  # noqa: F821
+        self, monkeypatch: pytest.MonkeyPatch  # noqa: F821
     ) -> None:
         monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
         fake_choice = MagicMock()
@@ -198,7 +198,7 @@ class TestOpenAIDirect:
 
 class TestGenerateStructured:
     def test_parses_pydantic_response(
-        self, monkeypatch: "pytest.MonkeyPatch"  # noqa: F821
+        self, monkeypatch: pytest.MonkeyPatch  # noqa: F821
     ) -> None:
         # The schema cleaner is pulled in-line — patch generate() directly
         fake_resp = llm_mod.LlmResponse(content='{"answer": "yes"}')

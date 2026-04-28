@@ -7,7 +7,7 @@ Component 3: Content Safety — moderation pre-filter + 4 parallel analyzers + s
 Source: https://github.com/assessorflow/validator-agent-test
 Integrated: 2026-04-05
 """
-from validator_agent.pipeline.validator_pipeline import validate_file
 from validator_agent.pipeline.models import ValidatorResult
+from validator_agent.pipeline.validator_pipeline import validate_file
 
 __all__ = ["validate_file", "ValidatorResult"]

@@ -26,7 +26,6 @@ from validator_agent.pipeline.visual_understanding import (
     process_visual_page,
 )
 
-
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png"
 
 

@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from validator_agent.pipeline.content_analyzers import run_all_analyzers
 from validator_agent.pipeline.content_synthesizer import findings_to_models, synthesize_findings
-from validator_agent.pipeline.moderation_prefilter import check_moderation
 from validator_agent.pipeline.models import ContentSafetyResult, Finding, PageOcrResult
+from validator_agent.pipeline.moderation_prefilter import check_moderation
 
 # Types that map to hard gates (TERMINATE)
 HARMFUL_TYPES = {"harmful"}

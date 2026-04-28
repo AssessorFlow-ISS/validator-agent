@@ -16,20 +16,18 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
-
 from validator_agent.pipeline.models import OcrResult, PageOcrResult
-from validator_agent.pipeline.visual_understanding import (
-    ImageModerationResult,
-    VisualProcessResult,
-    process_visual_batch,
-    evaluate_visual_batch,
-    _parse_batch_descriptions,
-)
 from validator_agent.pipeline.ocr_pipeline import (
     VISUAL_BATCH_SIZE,
     _enhance_visual_pages,
 )
-
+from validator_agent.pipeline.visual_understanding import (
+    ImageModerationResult,
+    VisualProcessResult,
+    _parse_batch_descriptions,
+    evaluate_visual_batch,
+    process_visual_batch,
+)
 
 # ── Helpers ────
 
@@ -357,6 +355,7 @@ class TestConfigOverride:
         """
         # Re-import to pick up new env var
         import importlib
+
         import validator_agent.pipeline.ocr_pipeline as mod
 
         importlib.reload(mod)
