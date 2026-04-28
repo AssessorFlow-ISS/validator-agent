@@ -30,6 +30,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify INTEGRATION_REPO_PAT secret
+        run: |
+          if [ -z "${{ secrets.INTEGRATION_REPO_PAT }}" ]; then
+            echo "::error::The INTEGRATION_REPO_PAT secret is required to checkout the assessorflow/shared dependency. Please add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - name: Checkout shared dependency
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

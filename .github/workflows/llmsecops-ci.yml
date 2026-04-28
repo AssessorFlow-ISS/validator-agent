@@ -19,7 +19,7 @@ on:
 jobs:
   validator-agent-llmsecops:
     name: validator-agent — LLMOps packaged CI
-    uses: assessorflow/af-llmsecops/.github/workflows/llmsecops-ci.yml@feat/thet-integration
+    uses: assessorflow/af-llmsecops/.github/workflows/llmsecops-ci.yml@0565477e8083a6b8083c011e9be33ab7a43a8364 # feat/thet-integration
     # Required for the called workflow to mint OIDC tokens (WIF auth
     # into GCP). Without this the packaged-push + oplus-hydrate jobs
     # fail at the google-github-actions/auth step.
