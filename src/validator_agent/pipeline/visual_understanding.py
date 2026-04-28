@@ -284,11 +284,11 @@ def evaluate_description(
     """
     image_b64 = _encode_image_b64(page_image_bytes)
 
-    # Build the JSON schema from EvaluationResult for structured output
-    eval_schema = EvaluationResult.model_json_schema()
-    # Clean schema for Gemini compatibility (remove unsupported keys)
-    for key in ("$defs", "title", "additionalProperties"):
-        eval_schema.pop(key, None)
+    # Build the JSON schema from EvaluationResult for structured output.
+    # Use the shared cleaner so $ref / $defs / anyOf-null / etc. are resolved
+    # recursively. Pre-popping just $defs at top level orphans nested $ref.
+    from af_shared.utils.schema_compat import clean_for_gemini
+    eval_schema = clean_for_gemini(EvaluationResult.model_json_schema())
 
     messages = [
         {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},

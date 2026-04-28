@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from validator_agent.pipeline.models import OcrResult, PageOcrResult
 from validator_agent.pipeline.visual_understanding import (

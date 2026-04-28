@@ -8,7 +8,6 @@ Prompt template loaded from ``prompts/page_classifier.yaml`` (ADR-39).
 
 from __future__ import annotations
 
-import os
 from enum import Enum
 
 from pydantic import BaseModel, Field

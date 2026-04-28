@@ -14,12 +14,11 @@ from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdap
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
-from validator_agent.adapters.pipeline_stub import make_stub_pipeline, stub_pipeline_fn
+from validator_agent.adapters.pipeline_stub import make_stub_pipeline
 from validator_agent.adapters.storage_stub import StubStorageAdapter
 from validator_agent.api.schemas import FileInfo, ValidationRequest
 from validator_agent.domain.services import ValidatorService
 from validator_agent.domain.terminal_signal import ReasonCode, TerminalSignalStatus
-from validator_agent.pipeline.models import ValidatorResult
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 

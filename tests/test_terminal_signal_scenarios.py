@@ -8,6 +8,7 @@ logging.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -17,16 +18,17 @@ from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapte
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
-from validator_agent.adapters.ocr_stub import StubOcrAdapter
 from validator_agent.adapters.pipeline_stub import make_stub_pipeline, stub_pipeline_fn
 from validator_agent.adapters.storage_stub import StubStorageAdapter
 from validator_agent.api.schemas import FileInfo, ValidationRequest, ValidationResponse
 from validator_agent.domain.services import ValidatorService
 from validator_agent.domain.terminal_signal import (
     ReasonCode,
-    TerminalSignal,
     TerminalSignalStatus,
 )
+
+if TYPE_CHECKING:
+    from validator_agent.pipeline.models import ValidatorResult
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -531,11 +533,9 @@ class TestMultiFilePartialTerminate:
         The overall signal should carry BLURRY_UNREADABLE, not a generic code.
         """
         request, files = _make_multi_file_request()
-        blurry_path = files[1].storage_path
 
         def _per_file_pipeline(file_bytes: bytes, file_name: str) -> "ValidatorResult":
             """MRC fails for file 2 only."""
-            from validator_agent.pipeline.models import ValidatorResult
             if file_name == "document_2.pdf":
                 return make_stub_pipeline(
                     mrc_readiness=False, mrc_confidence=0.15,
@@ -572,7 +572,6 @@ class TestMultiFilePartialTerminate:
 
         def _per_file_pipeline(file_bytes: bytes, file_name: str) -> "ValidatorResult":
             """File 1 blurry, file 2 harmful, file 3 clean."""
-            from validator_agent.pipeline.models import ValidatorResult
             if file_name == "document_1.pdf":
                 return make_stub_pipeline(
                     mrc_readiness=False, mrc_confidence=0.12,
@@ -620,7 +619,7 @@ class TestMultiFilePartialTerminate:
         )
         da = StubDecisionAuditAdapter()
         service, da_ref = _build_service(storage=storage, decision_audit=da)
-        response = await service.validate(request)
+        await service.validate(request)
 
         # Exactly one audit entry per validation invocation
         assert len(da_ref.entries) == 1

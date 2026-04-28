@@ -8,12 +8,11 @@ version = "0.1.0"
 description = "Validator Agent (#12) — centralized content safety gate for AssessorFlow"
 requires-python = ">=3.12"
 dependencies = [
-    "af_shared[langfuse]>=0.2.0",
-    "fastapi==0.135.3",
-    "uvicorn==0.44.0",
-    "pydantic==2.12.5",
-    "structlog==25.5.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.0",
     "pyyaml>=6.0",
+    "structlog>=24.0",
     "google-cloud-pubsub>=2.0",
     # Thet's pipeline dependencies (integrated 2026-04-05)
     "google-cloud-documentai>=2.32.0",
@@ -24,24 +23,25 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "requests>=2.32.0",
     "httpx>=0.27.0",
+    # Phase 6C.1 — Submission Service gRPC (reads materials, writes validation decisions)
+    "grpcio>=1.74.0",
+    "grpcio-tools>=1.74.0",
+    "protobuf>=5.29.0",
 ]
 
 [project.optional-dependencies]
 postgres = [
-    "asyncpg==0.31.0",
+    "asyncpg>=0.30.0",
 ]
 dev = [
     "pytest>=8.0",
-    "pytest-cov",
     "pytest-asyncio>=0.24.0",
     "httpx>=0.27.0",
+    "coverage>=7.0",
     "mypy",
     "ruff",
-    "asyncpg==0.31.0",
+    "asyncpg>=0.30.0",
 ]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/validator_agent"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -50,9 +50,29 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
+[tool.coverage.run]
+source = ["src/validator_agent"]
+omit = [
+    # Auto-generated gRPC stubs — regenerated from proto/, not hand-written
+    "src/validator_agent/_grpc/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/validator_agent"]
+
 [tool.ruff]
+# Exclude auto-generated gRPC stubs from linting -- regenerated from
+# proto/submission.proto via grpc_tools.protoc and should not be hand-edited.
 target-version = "py312"
 line-length = 100
+extend-exclude = ["src/validator_agent/_grpc"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]

@@ -91,6 +91,13 @@ class ContentSafetyResult(BaseModel):
     assessor_action_required: bool = False
     assessor_warnings: list[dict] = Field(default_factory=list)
 
+    # WF-3257BB (2026-04-24): when analyzers ERROR (e.g. upstream LLM auth
+    # failure), the *_findings lists are empty — visually identical to a
+    # clean pass. Surface the error count so the safety summary can flag
+    # "N/4 analyzers ERRORED" instead of misleading "0 harmful / 0 misinfo".
+    analyzer_error_count: int = 0
+    analyzer_error_messages: list[str] = Field(default_factory=list)
+
 
 # ── Validator Agent Overall Result ────
 

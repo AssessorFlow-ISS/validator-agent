@@ -12,6 +12,9 @@ Environment Variables:
     AUDIT_ADAPTER:     "stub" (default) | "postgres" | "grpc"
     EVENT_ADAPTER:     "stub" (default) | "pubsub"
     STORAGE_ADAPTER:   "stub" (default) | "gcs"
+    MATERIAL_ADAPTER:  "grpc" (default) — read materials + write validation
+                       decisions via Submission Service gRPC. Set to
+                       "stub" in tests to bypass the network.
 """
 from __future__ import annotations
 
@@ -30,6 +33,7 @@ class ValidatorConfig:
     audit_adapter: str
     event_adapter: str
     storage_adapter: str
+    material_adapter: str
 
     @classmethod
     def from_env(cls) -> ValidatorConfig:
@@ -42,4 +46,5 @@ class ValidatorConfig:
             audit_adapter=os.getenv("AUDIT_ADAPTER", "stub"),
             event_adapter=os.getenv("EVENT_ADAPTER", "stub"),
             storage_adapter=os.getenv("STORAGE_ADAPTER", "stub"),
+            material_adapter=os.getenv("MATERIAL_ADAPTER", "grpc"),
         )

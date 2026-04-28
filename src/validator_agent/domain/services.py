@@ -545,18 +545,29 @@ class ValidatorService:
         safety_result = await asyncio.to_thread(check_content_safety, ocr_result.pages)
         safety_parts = []
         safety_parts.append(f"OpenAI Moderation pre-filter: {'FLAGGED' if safety_result.harmful_detected else 'PASSED'} (free)")
-        findings_count = (
-            len(safety_result.harmful_findings) + len(safety_result.pii_findings)
-            + len(safety_result.religious_political_findings) + len(safety_result.copyright_findings)
-            + len(safety_result.misinformation_findings)
-        )
         if hasattr(safety_result, 'harmful_findings'):
-            safety_parts.append(
-                f"4 parallel analyzers: A({len(safety_result.harmful_findings)} harmful) "
-                f"B({len(safety_result.misinformation_findings)} misinfo) "
-                f"C({len(safety_result.pii_findings)} PII, {len(safety_result.copyright_findings)} copyright) "
-                f"D({len(safety_result.religious_political_findings)} political)"
-            )
+            # WF-3257BB (2026-04-24): when analyzers ERROR, the *_findings lists
+            # are empty and the old "0 harmful / 0 misinfo / ..." summary read
+            # like a clean pass — completely hiding the upstream LLM auth
+            # failure. Surface error count first so the operator sees the real
+            # status before any zero-count noise.
+            error_count = getattr(safety_result, 'analyzer_error_count', 0)
+            if error_count:
+                first_err = ""
+                msgs = getattr(safety_result, 'analyzer_error_messages', [])
+                if msgs:
+                    first_err = f" — first: {msgs[0][:120]}"
+                safety_parts.append(
+                    f"⚠ {error_count}/4 analyzers ERRORED{first_err}"
+                )
+            if error_count < 4:
+                safety_parts.append(
+                    f"{4 - error_count} analyzers ran: "
+                    f"A({len(safety_result.harmful_findings)} harmful) "
+                    f"B({len(safety_result.misinformation_findings)} misinfo) "
+                    f"C({len(safety_result.pii_findings)} PII, {len(safety_result.copyright_findings)} copyright) "
+                    f"D({len(safety_result.religious_political_findings)} political)"
+                )
         safety_summary = ". ".join(safety_parts)
         await self._write_progress_event(workflow_id, "assessorflow.validation.safety-complete", safety_summary)
         await self._tracing.trace_tool_call(
@@ -788,7 +799,14 @@ class ValidatorService:
                 warnings = getattr(safety, "assessor_warnings", [])
                 warning_penalty += len(warnings) * 0.05
 
-        return round(max(0.0, readable_ratio * (1.0 - min(warning_penalty, 0.5))), 4)
+        # Bind content_fitness to real MRC confidence × warning penalty (not a flat heuristic).
+        # Pre-fix produced 0.95 for any doc with 1 warning regardless of readability quality.
+        mrc_conf = 1.0
+        for _fi, raw in pipeline_results:
+            mrc = getattr(raw, "mrc", None)
+            if mrc is not None and getattr(mrc, "overall_confidence", None) is not None:
+                mrc_conf = min(mrc_conf, float(mrc.overall_confidence))
+        return round(max(0.0, readable_ratio * mrc_conf * (1.0 - min(warning_penalty * 2, 0.5))), 4)
 
     @staticmethod
     def _build_reasoning_steps(file_info: FileInfo, result: object, pipeline_start: object = None) -> list[dict]:
@@ -798,7 +816,7 @@ class ValidatorService:
         Each step gets a computed timestamp based on cumulative latency from
         pipeline_start so the trace timeline shows sequential progression.
         """
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
 
         steps: list[dict] = []
         step_num = 0
@@ -826,11 +844,12 @@ class ValidatorService:
                 "component": "mrc",
                 "model_id": "vertex-ai/mrc-production",
                 "action": (
-                    f"MRC readability check: {mrc.readable_pages}/{mrc.total_pages} pages readable, "
-                    f"confidence {mrc.overall_confidence:.3f}, blurry_ratio {mrc.blurry_ratio:.0%}{excluded}"
+                    f"MRC readability check: {mrc.readable_pages}/{mrc.total_pages} pages readable"
+                    f", blurry_ratio {mrc.blurry_ratio:.0%}{excluded}"
                 ),
                 "status": mrc.overall_status,
                 "latency_ms": mrc.inference_time_ms,
+                "confidence": round(float(mrc.overall_confidence), 4),
             }
             if ts:
                 step_data["timestamp"] = ts
@@ -853,6 +872,7 @@ class ValidatorService:
                 ),
                 "status": ocr.overall_status,
                 "latency_ms": ocr.ocr_time_ms,
+                "confidence": 1.0 if ocr.overall_status in ("PROCEED", "PROCEED_WITH_WARNINGS") else 0.0,
             }
             if ts:
                 ocr_step["timestamp"] = ts
@@ -867,11 +887,15 @@ class ValidatorService:
                 page_cls_ms = getattr(ocr, "page_classification_time_ms", 0) or 0
                 ts = _step_timestamp()
                 cumulative_ms += page_cls_ms
+                # Page-classification confidence: 1.0 if all pages classified, 0.0 if none
+                _classified = sum(1 for p in ocr.pages if p.classification in ("TEXT", "VISUAL"))
+                _pg_conf = round(_classified / max(len(ocr.pages), 1), 4)
                 pg_step: dict = {
                     "step": step_num,
                     "component": "page_classification",
                     "model_id": "gpt-4.1-mini",
                     "action": f"Page classification: {text_count} TEXT, {visual_count} VISUAL",
+                    "confidence": _pg_conf,
                     "pages": [
                         {"page": p.page_number, "class": p.classification, "source": p.source}
                         for p in ocr.pages
@@ -899,11 +923,15 @@ class ValidatorService:
                     f"page {p.page_number}: {p.source} (attempts: {p.visual_attempts})"
                     for p in ocr.pages if p.classification == "VISUAL"
                 ]
+                _vis_count = sum(1 for p in ocr.pages if p.classification == "VISUAL")
+                _vis_enhanced = sum(1 for p in ocr.pages if p.classification == "VISUAL" and p.source == "llm")
+                _vis_conf = round(_vis_enhanced / max(_vis_count, 1), 4) if _vis_count else 1.0
                 steps.append({
                     "step": step_num,
                     "component": "visual_understanding",
                     "model_id": "gpt-4.1",
                     "action": f"Visual understanding: {ocr.visual_pages_processed} pages enhanced. {', '.join(visual_details)}",
+                    "confidence": _vis_conf,
                 })
 
             if terminated_at == "ocr":
@@ -931,6 +959,7 @@ class ValidatorService:
                 "model_id": "openai/moderation-api",
                 "action": "OpenAI Moderation pre-filter: PASSED (free)",
                 "status": "PASSED",
+                "confidence": 1.0,
             }
             if ts:
                 mod_step["timestamp"] = ts
@@ -944,6 +973,7 @@ class ValidatorService:
                 "D": len(safety.religious_political_findings),
             }
             step_num += 1
+            _analyzer_conf = round(max(0.0, 1.0 - 0.10 * sum(findings.values())), 4)
             steps.append({
                 "step": step_num,
                 "component": "content_analyzers",
@@ -954,16 +984,19 @@ class ValidatorService:
                     f"C({findings['C']} PII/copyright) D({findings['D']} religious/political)"
                 ),
                 "findings_total": sum(findings.values()),
+                "confidence": _analyzer_conf,
             })
 
             # Step 6: Synthesizer (inferred from findings presence)
             total = sum(findings.values())
             step_num += 1
+            _synth_conf = round(max(0.5, 1.0 - 0.05 * total), 4)
             steps.append({
                 "step": step_num,
                 "component": "synthesizer",
                 "model_id": "gpt-4.1",
                 "action": f"Synthesizer: {total} finding(s) confirmed after voting",
+                "confidence": _synth_conf,
             })
 
             # Step 7: Content safety decision
@@ -1003,11 +1036,14 @@ class ValidatorService:
                 return steps
 
             soft_desc = ". ".join(soft_items) if soft_items else "No issues detected"
+            # Content-fit decision confidence reflects soft-issue load (each soft -8%).
+            _fit_conf = round(max(0.5, 1.0 - 0.08 * len(soft_items)), 4)
             steps.append({
                 "step": step_num,
                 "component": "content_fit_decision",
                 "action": f"Content-Fit decision: {safety.overall_status}. {soft_desc}",
                 "status": safety.overall_status,
+                "confidence": _fit_conf,
             })
 
         # Step 8: Knowledge Service write (on PROCEED)
@@ -1018,6 +1054,7 @@ class ValidatorService:
                 "step": step_num,
                 "component": "knowledge_service",
                 "action": f"Forwarded {cleaned_len} chars (PII-redacted) to Knowledge Service for chunking and embedding",
+                "confidence": 1.0,
             })
 
         return steps
@@ -1054,6 +1091,19 @@ class ValidatorService:
             message="All files validated successfully",
         )
 
+    @staticmethod
+    def _build_composite_model_id() -> str:
+        """Build composite model_id from actual models used in the pipeline.
+
+        MRC and Document AI are non-LLM services with fixed descriptive names.
+        The LLM component comes from the real Model Broker response tracked
+        by llm_client.get_stats().last_model_used.
+        """
+        from validator_agent.pipeline.llm_client import get_stats
+
+        llm_model = get_stats().last_model_used
+        return f"vertex-ai-mrc + document-ai-ocr + {llm_model}"
+
     async def _log_audit_decision(
         self,
         *,
@@ -1065,6 +1115,8 @@ class ValidatorService:
         content_fitness: float = 0.0,
     ) -> None:
         """Log the validation decision to both sinks using ONE canonical format."""
+        composite_model_id = self._build_composite_model_id()
+
         entry = DecisionLogEntry(
             workflow_id=request.workflow_id,
             agent_name="validator-agent",
@@ -1095,7 +1147,7 @@ class ValidatorService:
             reasoning_steps=reasoning_steps,
             confidence_score=content_fitness,
             prompt_version="validator/thet-pipeline@v1",
-            model_id="vertex-ai-mrc + document-ai-ocr + gpt-4.1",
+            model_id=composite_model_id,
             grounding_sources=grounding_chunk_ids or [f.file_name for f in file_results],
         )
 
