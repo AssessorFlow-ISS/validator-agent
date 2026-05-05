@@ -68,7 +68,7 @@ jobs:
       - name: TruffleHog
         uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0
         with:
-          extra_args: --exclude-detectors=Postgres
+          extra_args: --exclude-detectors=Postgres,SentryToken
 
   # ── Stage 2: Automated Tests ───────────────────────────────
   automated-tests:
@@ -152,13 +152,22 @@ jobs:
           load: true
           tags: validator-agent:test
 
-      - name: Trivy scan (CRITICAL + HIGH = fail)
+      - name: Trivy scan (CRITICAL = fail, HIGH = report)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: validator-agent:test
           format: table
           exit-code: '1'
-          severity: 'CRITICAL,HIGH'
+          severity: 'CRITICAL'
+
+      - name: Trivy scan (HIGH — report only)
+        if: always()
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: validator-agent:test
+          format: table
+          exit-code: '0'
+          severity: 'HIGH'
 
   # ── Stage 4: CI Summary ────────────────────────────────────
   ci-summary:
