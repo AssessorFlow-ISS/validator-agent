@@ -1,5 +1,5 @@
 ---
-version: "1"
+version: "2"
 model_tier: HIGH
 temperature: 0.0
 max_output_tokens: 2048

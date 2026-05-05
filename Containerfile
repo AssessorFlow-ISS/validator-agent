@@ -28,8 +28,7 @@ RUN /usr/local/bin/uv sync --frozen --no-dev --no-editable --active
 
 FROM rockylinux/rockylinux:10-ubi
 
-RUN dnf upgrade -y && \
-    dnf install -y poppler-utils && \
+RUN dnf install -y poppler-utils && \
     dnf clean all
 
 ENV VIRTUAL_ENV=/opt/app/.venv \
