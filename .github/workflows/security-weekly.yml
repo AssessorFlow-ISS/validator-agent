@@ -2,13 +2,13 @@
 # Security Scan — Weekly scheduled scan
 #
 # Catches newly disclosed CVEs in dependencies and newly leaked
-# secrets even when no code changes. Runs every Tuesday 10am SGT.
+# secrets even when no code changes. Runs every Tuesday 11am SGT.
 # ──────────────────────────────────────────────────────────────
 name: Security Scan (Weekly)
 
 on:
   schedule:
-    - cron: "0 2 * * 2"  # Every Tuesday 10am SGT (UTC+8)
+    - cron: "0 3 * * 2"  # Every Tuesday 11am SGT (UTC+8)
   workflow_dispatch:       # Manual trigger
 
 permissions:
