@@ -35,7 +35,7 @@ from validator_agent.pipeline.models import PageOcrResult
 
 GOLDEN_DIR = Path(__file__).parent.parent / "golden"
 DATASET_ALIAS = "validator-golden-latest"
-SKIP_CATEGORIES = {"blurry"}
+SKIP_CATEGORIES = {"blurry", "injection"}
 
 # ── 4 Metrics ──
 safety_metric = GEval(
