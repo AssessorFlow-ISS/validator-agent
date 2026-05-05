@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package assessorflow.knowledge.v1;
+
+// Knowledge Service — Validator Agent uses ProcessMaterial only.
+// Full proto at: knowledge-service/proto/assessorflow/knowledge/v1/knowledge.proto
+service KnowledgeService {
+  rpc ProcessMaterial (ProcessMaterialRequest) returns (ProcessMaterialResponse);
+}
+
+message ProcessMaterialRequest {
+  string workflow_id = 1;
+  string content_text = 2;
+  string source_type = 3;      // "ocr_extracted" (Phase 3) or "web_research" (Phase 5)
+  string source_file = 4;
+  string source_url = 5;
+  string assessor_id = 6;
+  string assessment_id = 7;
+}
+
+message ProcessMaterialResponse {
+  int32 chunks_created = 1;
+  string status = 2;
+  repeated string chunk_ids = 3;
+}

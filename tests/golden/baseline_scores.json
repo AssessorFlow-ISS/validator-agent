@@ -1,0 +1,6 @@
+{
+  "Safety Detection Accuracy": 0.84,
+  "PII Detection Recall": 1.00,
+  "Faithfulness": 0.90,
+  "Explanation Quality": 0.87
+}

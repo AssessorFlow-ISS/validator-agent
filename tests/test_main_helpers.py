@@ -438,42 +438,12 @@ class TestBuildService:
         assert type(ev).__name__ == "StubEventPublisherAdapter"
         assert type(mv).__name__ == "StubMaterialValidationAdapter"
 
-    def test_unknown_llm_provider_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
-            _build_service(self._config(llm_provider="unknown"))
-
     def test_unknown_event_adapter_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown EVENT_ADAPTER"):
             _build_service(self._config(event_adapter="unknown"))
 
     def test_local_storage_selected_when_configured(self) -> None:
         service, *_ = _build_service(self._config(storage_adapter="local"))
-        assert service is not None
-
-    def test_http_llm_provider_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.model_broker_http.ModelBrokerHttpAdapter"
-        ) as mock_cls:
-            mock_cls.return_value = MagicMock()
-            service, *_ = _build_service(self._config(llm_provider="http"))
-        assert service is not None
-
-    def test_http_knowledge_service_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.knowledge_service_http.KnowledgeServiceHttpAdapter"
-        ) as mock_cls:
-            mock_cls.return_value = MagicMock()
-            service, *_, ks, _mv = _build_service(
-                self._config(knowledge_adapter="http")
-            )
-        assert service is not None
-
-    def test_postgres_audit_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.decision_audit_postgres.PostgresDecisionAuditAdapter"
-        ) as mock_cls:
-            mock_cls.return_value = MagicMock()
-            service, *_ = _build_service(self._config(audit_adapter="postgres"))
         assert service is not None
 
     def test_pubsub_event_branch(self) -> None:

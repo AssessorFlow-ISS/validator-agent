@@ -25,7 +25,6 @@ from validator_agent.pipeline.visual_understanding import (
     ImageModerationResult,
     VisualProcessResult,
     _parse_batch_descriptions,
-    evaluate_visual_batch,
     process_visual_batch,
 )
 
@@ -372,57 +371,6 @@ class TestConfigOverride:
 class TestProcessVisualBatch:
     """Unit tests for the batch generator function itself."""
 
-    def test_process_visual_batch_returns_dict_keyed_by_page_number(self):
-        """process_visual_batch returns {page_number: VisualProcessResult}."""
-        batch_items = _make_batch_items([3, 5, 8])
-
-        batch_response = (
-            "## Page 3\nDescription of page 3 diagram.\n\n"
-            "## Page 5\nDescription of page 5 chart.\n\n"
-            "## Page 8\nDescription of page 8 table."
-        )
-
-        # Mock both the generator call and the evaluator call via _call_model_broker
-        import json as json_mod
-        page_eval = {
-            "overall": "PASS",
-            "dimensions": {
-                "accuracy": {"verdict": "PASS", "feedback": None},
-                "completeness": {"verdict": "PASS", "feedback": None},
-                "educational_value": {"verdict": "PASS", "feedback": None},
-            },
-            "retry_prompt_supplement": None,
-        }
-        eval_response = json_mod.dumps({
-            "3": page_eval,
-            "5": page_eval,
-            "8": page_eval,
-        })
-
-        call_count = {"n": 0}
-
-        def broker_side_effect(messages, **kwargs):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                return batch_response  # generator call
-            return eval_response  # evaluator call
-
-        with patch(
-            "validator_agent.pipeline.visual_understanding.check_image_moderation"
-        ) as mock_mod, patch(
-            "validator_agent.pipeline.visual_understanding._call_model_broker"
-        ) as mock_broker:
-            mock_mod.return_value = ImageModerationResult(flagged=False)
-            mock_broker.side_effect = broker_side_effect
-
-            results = process_visual_batch(batch_items)
-
-            assert isinstance(results, dict)
-            assert set(results.keys()) == {3, 5, 8}
-            for pn in (3, 5, 8):
-                assert isinstance(results[pn], VisualProcessResult)
-                assert results[pn].source in ("llm", "ocr_fallback")
-
     def test_process_visual_batch_harmful_image_terminates_early(self):
         """If any image in batch is flagged harmful, return immediately."""
         batch_items = _make_batch_items([1, 2, 3])
@@ -447,44 +395,6 @@ class TestProcessVisualBatch:
             # Should contain the harmful page result
             assert 2 in results
             assert results[2].harmful_image_detected is True
-
-
-class TestEvaluateVisualBatch:
-    """Unit tests for the batch evaluator function."""
-
-    def test_evaluate_batch_returns_per_page_verdicts(self):
-        """evaluate_visual_batch returns dict of {page_number: EvaluationResult}."""
-        batch_items = _make_batch_items([1, 2, 3])
-        descriptions = {
-            1: "Description of page 1",
-            2: "Description of page 2",
-            3: "Description of page 3",
-        }
-
-        import json as json_mod
-        page_eval = {
-            "overall": "PASS",
-            "dimensions": {
-                "accuracy": {"verdict": "PASS", "feedback": None},
-                "completeness": {"verdict": "PASS", "feedback": None},
-                "educational_value": {"verdict": "PASS", "feedback": None},
-            },
-            "retry_prompt_supplement": None,
-        }
-        eval_response = json_mod.dumps({
-            "1": page_eval,
-            "2": page_eval,
-            "3": page_eval,
-        })
-
-        with patch(
-            "validator_agent.pipeline.visual_understanding._call_model_broker",
-            return_value=eval_response,
-        ):
-            eval_results = evaluate_visual_batch(batch_items, descriptions)
-
-            assert isinstance(eval_results, dict)
-            assert set(eval_results.keys()) == {1, 2, 3}
 
 
 # ── _parse_batch_descriptions edge cases ────

@@ -1,8 +1,7 @@
-"""Stub replacement for Thet's 3-component validate_file() pipeline.
+"""Stub replacement for the 3-component validate_file() pipeline.
 
 Uses keyword detection on file content to simulate MRC, OCR, and Content Safety
-results. Returns ValidatorResult matching Thet's schema for integration with
-Dale's ValidatorService bridge layer.
+results. Returns ValidatorResult for integration with the ValidatorService bridge layer.
 
 No external calls — safe for unit tests and CI.
 """
@@ -44,7 +43,7 @@ def make_stub_pipeline(
         mrc_readiness: Simulate MRC readability result.
         mrc_confidence: Simulate MRC confidence score.
         ocr_text: Override OCR output text. None = use file content or default.
-        min_ocr_length: Minimum text length for OCR pass (matches Thet's pipeline).
+        min_ocr_length: Minimum text length for OCR pass.
     """
     def _fn(file_bytes: bytes, file_name: str) -> ValidatorResult:
         return _stub_pipeline_impl(
@@ -58,7 +57,7 @@ def make_stub_pipeline(
 
 
 def stub_pipeline_fn(file_bytes: bytes, file_name: str) -> ValidatorResult:
-    """Default stub replacement for Thet's validate_file()."""
+    """Default stub replacement for validate_file()."""
     return _stub_pipeline_impl(file_bytes, file_name)
 
 

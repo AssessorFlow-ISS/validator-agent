@@ -1,7 +1,7 @@
 """Shared test fixtures for the Validator Agent test suite.
 
 All fixtures use stub adapters — zero external dependencies required.
-The stub_pipeline_fn (from adapters/pipeline_stub.py) replaces Thet's
+The stub_pipeline_fn (from adapters/pipeline_stub.py) replaces the
 real 3-component pipeline with a keyword-based stub that returns canned
 ValidatorResult objects.
 """
@@ -10,18 +10,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
+from validator_agent.adapters.tracing_stub import StubTracingAdapter
 from httpx import ASGITransport, AsyncClient
 
 from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapter
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
-from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
 from validator_agent.adapters.pipeline_stub import stub_pipeline_fn
 from validator_agent.adapters.storage_stub import StubStorageAdapter
-from validator_agent.domain.content_safety import ContentSafetyReasoner
 from validator_agent.domain.services import ValidatorService
 from validator_agent.main import create_app
 
@@ -54,11 +52,6 @@ def stub_ocr(clean_text: str) -> StubOcrAdapter:
 
 
 @pytest.fixture
-def stub_model_broker() -> StubModelBrokerAdapter:
-    return StubModelBrokerAdapter()
-
-
-@pytest.fixture
 def stub_knowledge_service() -> StubKnowledgeServiceAdapter:
     return StubKnowledgeServiceAdapter()
 
@@ -76,13 +69,6 @@ def stub_event_publisher() -> StubEventPublisherAdapter:
 @pytest.fixture
 def stub_storage() -> StubStorageAdapter:
     return StubStorageAdapter()
-
-
-@pytest.fixture
-def content_safety_reasoner(
-    stub_model_broker: StubModelBrokerAdapter,
-) -> ContentSafetyReasoner:
-    return ContentSafetyReasoner(model_broker=stub_model_broker)
 
 
 @pytest.fixture

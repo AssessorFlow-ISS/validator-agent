@@ -182,7 +182,7 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
     cleaned_text = _apply_redactions(pages, pii_findings)
 
     # Determine overall status
-    has_soft_warnings = bool(copyright_findings or misinformation_findings)
+    has_soft_warnings = bool(pii_findings or copyright_findings or misinformation_findings)
 
     if has_soft_warnings:
         overall_status = "PROCEED_WITH_WARNINGS"

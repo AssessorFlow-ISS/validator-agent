@@ -145,7 +145,7 @@ def _build_result(
     total_word_count = sum(p.word_count for p in all_pages)
     elapsed_ms = time.time() * 1000 - start_ms
 
-    return OcrResult(
+    result = OcrResult(
         file_name=file_name,
         total_pages=len(all_pages),
         pages=all_pages,
@@ -155,6 +155,21 @@ def _build_result(
         error_message=None if total_word_count > 0 else "No text extracted from any page",
         processing_mode=processing_mode,
     )
+
+    # Langfuse trace (fire-and-forget)
+    from validator_agent.pipeline.llm_client import trace_tool
+    trace_tool(
+        tool_name="documentai-ocr",
+        input_params={"file_name": file_name, "processing_mode": processing_mode},
+        output_summary={
+            "total_pages": len(all_pages),
+            "total_word_count": total_word_count,
+            "success": total_word_count > 0,
+        },
+        latency_ms=round(elapsed_ms, 2),
+    )
+
+    return result
 
 
 # ── Public API ────

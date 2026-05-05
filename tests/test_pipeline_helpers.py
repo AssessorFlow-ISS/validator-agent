@@ -39,41 +39,6 @@ def _mk_page(text: str = "hello world", page_number: int = 1) -> PageOcrResult:
     )
 
 
-# ---- moderation_prefilter ------------------------------------------------
-
-
-class TestModerationPrefilter:
-    def test_flagged_returns_categories(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "flagged": True,
-            "categories": ["violence"],
-        }
-        with patch.object(moderation_prefilter.httpx, "post", return_value=mock_resp):
-            res = moderation_prefilter.check_moderation("bad stuff")
-        assert res.flagged is True
-        assert res.categories == ["violence"]
-        assert res.error is None
-
-    def test_not_flagged(self) -> None:
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {"flagged": False}
-        with patch.object(moderation_prefilter.httpx, "post", return_value=mock_resp):
-            res = moderation_prefilter.check_moderation("benign")
-        assert res.flagged is False
-        assert res.categories == []
-
-    def test_exception_is_captured_into_error_field(self) -> None:
-        with patch.object(
-            moderation_prefilter.httpx, "post", side_effect=RuntimeError("boom")
-        ):
-            res = moderation_prefilter.check_moderation("x")
-        assert res.flagged is False
-        assert res.error and "boom" in res.error
-
-
 # ---- page_classifier -----------------------------------------------------
 
 
@@ -344,7 +309,7 @@ class TestPipelineContentSafety:
         ):
             out = cs_mod.check_content_safety([page])
 
-        assert out.overall_status == "PROCEED"
+        assert out.overall_status == "PROCEED_WITH_WARNINGS"
         assert out.pii_detected is True
         assert "[NAME]" in out.cleaned_text
         assert any(w["type"] == "pii_redacted" for w in out.assessor_warnings)

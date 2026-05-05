@@ -97,7 +97,9 @@ def run_all_analyzers(pages: list[PageOcrResult]) -> AllAnalyzerResults:
     results = {}
     errors = []
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    import os
+    max_w = int(os.getenv("ANALYZER_MAX_WORKERS", "4"))
+    with ThreadPoolExecutor(max_workers=max_w) as executor:
         futures = {
             executor.submit(_run_analyzer, sys, pages_text, name): name
             for sys, pages_text, name in analyzers

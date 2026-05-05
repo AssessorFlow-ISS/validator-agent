@@ -3,10 +3,11 @@ version: "1"
 model_tier: HIGH
 temperature: 0.2
 max_output_tokens: 2000
-max_retries: 2
-description: "Visual page description generator using GPT-4o with evaluator-optimizer loop"
-created: "2026-04-05"
 task_key: "validator.visual_generation"
+description: "Visual page description generator with evaluator-optimizer loop"
+created: "2026-04-05"
+updated: "2026-04-05"
+max_retries: 2
 retry_template: |
   Your previous description was evaluated:
 

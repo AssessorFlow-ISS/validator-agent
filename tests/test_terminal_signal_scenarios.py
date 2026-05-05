@@ -87,7 +87,7 @@ def _build_service(
             ocr_text=ocr_text,
         )
 
-    from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
+    from validator_agent.adapters.tracing_stub import StubTracingAdapter
 
     service = ValidatorService(
         knowledge_service=StubKnowledgeServiceAdapter(),
@@ -546,7 +546,7 @@ class TestMultiFilePartialTerminate:
 
         assert response.terminal_signal.status == TerminalSignalStatus.TERMINATE
         assert response.terminal_signal.reason_code == ReasonCode.BLURRY_UNREADABLE
-        # Message comes from Thet's pipeline; verify it is non-empty and human-readable
+        # Message comes from the pipeline; verify it is non-empty and human-readable
         assert len(response.terminal_signal.message.strip()) > 0
 
         # The specific file that failed

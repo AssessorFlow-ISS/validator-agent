@@ -36,11 +36,10 @@ class ValidationRequest(BaseModel):
 
 
 class FileResult(BaseModel):
-    """Validation result for a single file including Thet's pipeline output."""
+    """Validation result for a single file including pipeline output."""
 
     file_name: str
     terminal_signal: TerminalSignal
-    # Thet's pipeline provides rich per-component results
     cleaned_text: str = ""
     assessor_warnings: list[dict] = Field(default_factory=list)
     total_time_ms: float = 0.0

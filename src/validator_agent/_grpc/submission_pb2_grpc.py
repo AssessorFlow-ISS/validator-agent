@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from . import submission_pb2 as submission__pb2
+from validator_agent._grpc import submission_pb2 as submission__pb2
 
 GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
@@ -26,8 +26,8 @@ if _version_not_supported:
 
 
 class SubmissionServiceStub(object):
-    """Assessment Submission Service — internal gRPC API (api_contract.md Section 2)
-    Central record keeper: owns assessment config, materials, questions, submissions, evaluations, reports.
+    """Assessment Submission Service — Validator Agent uses GetMaterials + UpdateMaterialValidation only.
+    Full proto at: submission-service/proto/assessorflow/submission/v1/submission.proto
     """
 
     def __init__(self, channel):
@@ -36,70 +36,10 @@ class SubmissionServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.GetAssessmentConfig = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/GetAssessmentConfig',
-                request_serializer=submission__pb2.GetAssessmentConfigRequest.SerializeToString,
-                response_deserializer=submission__pb2.GetAssessmentConfigResponse.FromString,
-                _registered_method=True)
         self.GetMaterials = channel.unary_unary(
                 '/assessorflow.submission.v1.SubmissionService/GetMaterials',
                 request_serializer=submission__pb2.GetMaterialsRequest.SerializeToString,
                 response_deserializer=submission__pb2.GetMaterialsResponse.FromString,
-                _registered_method=True)
-        self.CreateQuestionSet = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/CreateQuestionSet',
-                request_serializer=submission__pb2.CreateQuestionSetRequest.SerializeToString,
-                response_deserializer=submission__pb2.CreateQuestionSetResponse.FromString,
-                _registered_method=True)
-        self.WriteGeneratedQuestions = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/WriteGeneratedQuestions',
-                request_serializer=submission__pb2.WriteGeneratedQuestionsRequest.SerializeToString,
-                response_deserializer=submission__pb2.WriteGeneratedQuestionsResponse.FromString,
-                _registered_method=True)
-        self.GetGeneratedQuestionsWithAnswers = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/GetGeneratedQuestionsWithAnswers',
-                request_serializer=submission__pb2.GetGeneratedQuestionsRequest_.SerializeToString,
-                response_deserializer=submission__pb2.GetGeneratedQuestionsResponse.FromString,
-                _registered_method=True)
-        self.IncrementQuestionSetIteration = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/IncrementQuestionSetIteration',
-                request_serializer=submission__pb2.IncrementIterationRequest.SerializeToString,
-                response_deserializer=submission__pb2.IncrementIterationResponse.FromString,
-                _registered_method=True)
-        self.GetApprovedQuestionsWithAnswers = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/GetApprovedQuestionsWithAnswers',
-                request_serializer=submission__pb2.GetApprovedQuestionsRequest.SerializeToString,
-                response_deserializer=submission__pb2.GetApprovedQuestionsResponse.FromString,
-                _registered_method=True)
-        self.CreateEvaluation = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/CreateEvaluation',
-                request_serializer=submission__pb2.CreateEvaluationRequest.SerializeToString,
-                response_deserializer=submission__pb2.CreateEvaluationResponse.FromString,
-                _registered_method=True)
-        self.CreateGroupEvaluation = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/CreateGroupEvaluation',
-                request_serializer=submission__pb2.CreateGroupEvaluationRequest.SerializeToString,
-                response_deserializer=submission__pb2.CreateGroupEvaluationResponse.FromString,
-                _registered_method=True)
-        self.GetEvaluation = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/GetEvaluation',
-                request_serializer=submission__pb2.GetEvaluationRequest.SerializeToString,
-                response_deserializer=submission__pb2.GetEvaluationResponse.FromString,
-                _registered_method=True)
-        self.CreateReport = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/CreateReport',
-                request_serializer=submission__pb2.CreateReportRequest.SerializeToString,
-                response_deserializer=submission__pb2.CreateReportResponse.FromString,
-                _registered_method=True)
-        self.UploadWebResearchMaterials = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/UploadWebResearchMaterials',
-                request_serializer=submission__pb2.UploadWebResearchRequest.SerializeToString,
-                response_deserializer=submission__pb2.UploadWebResearchResponse.FromString,
-                _registered_method=True)
-        self.StartWorkflow = channel.unary_unary(
-                '/assessorflow.submission.v1.SubmissionService/StartWorkflow',
-                request_serializer=submission__pb2.StartWorkflowRequest.SerializeToString,
-                response_deserializer=submission__pb2.StartWorkflowResponse.FromString,
                 _registered_method=True)
         self.UpdateMaterialValidation = channel.unary_unary(
                 '/assessorflow.submission.v1.SubmissionService/UpdateMaterialValidation',
@@ -109,15 +49,9 @@ class SubmissionServiceStub(object):
 
 
 class SubmissionServiceServicer(object):
-    """Assessment Submission Service — internal gRPC API (api_contract.md Section 2)
-    Central record keeper: owns assessment config, materials, questions, submissions, evaluations, reports.
+    """Assessment Submission Service — Validator Agent uses GetMaterials + UpdateMaterialValidation only.
+    Full proto at: submission-service/proto/assessorflow/submission/v1/submission.proto
     """
-
-    def GetAssessmentConfig(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
 
     def GetMaterials(self, request, context):
         """Missing associated documentation comment in .proto file."""
@@ -125,76 +59,8 @@ class SubmissionServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
-    def CreateQuestionSet(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def WriteGeneratedQuestions(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetGeneratedQuestionsWithAnswers(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def IncrementQuestionSetIteration(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetApprovedQuestionsWithAnswers(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def CreateEvaluation(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def CreateGroupEvaluation(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def GetEvaluation(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def CreateReport(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def UploadWebResearchMaterials(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def StartWorkflow(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def UpdateMaterialValidation(self, request, context):
-        """Added proto v2 (Phase 6C.1) — Validator agent writes a validation
-        decision (PROCEED/REJECT with reason) on a single material.
-        """
+        """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -202,70 +68,10 @@ class SubmissionServiceServicer(object):
 
 def add_SubmissionServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'GetAssessmentConfig': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetAssessmentConfig,
-                    request_deserializer=submission__pb2.GetAssessmentConfigRequest.FromString,
-                    response_serializer=submission__pb2.GetAssessmentConfigResponse.SerializeToString,
-            ),
             'GetMaterials': grpc.unary_unary_rpc_method_handler(
                     servicer.GetMaterials,
                     request_deserializer=submission__pb2.GetMaterialsRequest.FromString,
                     response_serializer=submission__pb2.GetMaterialsResponse.SerializeToString,
-            ),
-            'CreateQuestionSet': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateQuestionSet,
-                    request_deserializer=submission__pb2.CreateQuestionSetRequest.FromString,
-                    response_serializer=submission__pb2.CreateQuestionSetResponse.SerializeToString,
-            ),
-            'WriteGeneratedQuestions': grpc.unary_unary_rpc_method_handler(
-                    servicer.WriteGeneratedQuestions,
-                    request_deserializer=submission__pb2.WriteGeneratedQuestionsRequest.FromString,
-                    response_serializer=submission__pb2.WriteGeneratedQuestionsResponse.SerializeToString,
-            ),
-            'GetGeneratedQuestionsWithAnswers': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetGeneratedQuestionsWithAnswers,
-                    request_deserializer=submission__pb2.GetGeneratedQuestionsRequest_.FromString,
-                    response_serializer=submission__pb2.GetGeneratedQuestionsResponse.SerializeToString,
-            ),
-            'IncrementQuestionSetIteration': grpc.unary_unary_rpc_method_handler(
-                    servicer.IncrementQuestionSetIteration,
-                    request_deserializer=submission__pb2.IncrementIterationRequest.FromString,
-                    response_serializer=submission__pb2.IncrementIterationResponse.SerializeToString,
-            ),
-            'GetApprovedQuestionsWithAnswers': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetApprovedQuestionsWithAnswers,
-                    request_deserializer=submission__pb2.GetApprovedQuestionsRequest.FromString,
-                    response_serializer=submission__pb2.GetApprovedQuestionsResponse.SerializeToString,
-            ),
-            'CreateEvaluation': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateEvaluation,
-                    request_deserializer=submission__pb2.CreateEvaluationRequest.FromString,
-                    response_serializer=submission__pb2.CreateEvaluationResponse.SerializeToString,
-            ),
-            'CreateGroupEvaluation': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateGroupEvaluation,
-                    request_deserializer=submission__pb2.CreateGroupEvaluationRequest.FromString,
-                    response_serializer=submission__pb2.CreateGroupEvaluationResponse.SerializeToString,
-            ),
-            'GetEvaluation': grpc.unary_unary_rpc_method_handler(
-                    servicer.GetEvaluation,
-                    request_deserializer=submission__pb2.GetEvaluationRequest.FromString,
-                    response_serializer=submission__pb2.GetEvaluationResponse.SerializeToString,
-            ),
-            'CreateReport': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateReport,
-                    request_deserializer=submission__pb2.CreateReportRequest.FromString,
-                    response_serializer=submission__pb2.CreateReportResponse.SerializeToString,
-            ),
-            'UploadWebResearchMaterials': grpc.unary_unary_rpc_method_handler(
-                    servicer.UploadWebResearchMaterials,
-                    request_deserializer=submission__pb2.UploadWebResearchRequest.FromString,
-                    response_serializer=submission__pb2.UploadWebResearchResponse.SerializeToString,
-            ),
-            'StartWorkflow': grpc.unary_unary_rpc_method_handler(
-                    servicer.StartWorkflow,
-                    request_deserializer=submission__pb2.StartWorkflowRequest.FromString,
-                    response_serializer=submission__pb2.StartWorkflowResponse.SerializeToString,
             ),
             'UpdateMaterialValidation': grpc.unary_unary_rpc_method_handler(
                     servicer.UpdateMaterialValidation,
@@ -281,36 +87,9 @@ def add_SubmissionServiceServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class SubmissionService(object):
-    """Assessment Submission Service — internal gRPC API (api_contract.md Section 2)
-    Central record keeper: owns assessment config, materials, questions, submissions, evaluations, reports.
+    """Assessment Submission Service — Validator Agent uses GetMaterials + UpdateMaterialValidation only.
+    Full proto at: submission-service/proto/assessorflow/submission/v1/submission.proto
     """
-
-    @staticmethod
-    def GetAssessmentConfig(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/GetAssessmentConfig',
-            submission__pb2.GetAssessmentConfigRequest.SerializeToString,
-            submission__pb2.GetAssessmentConfigResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def GetMaterials(request,
@@ -329,303 +108,6 @@ class SubmissionService(object):
             '/assessorflow.submission.v1.SubmissionService/GetMaterials',
             submission__pb2.GetMaterialsRequest.SerializeToString,
             submission__pb2.GetMaterialsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def CreateQuestionSet(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/CreateQuestionSet',
-            submission__pb2.CreateQuestionSetRequest.SerializeToString,
-            submission__pb2.CreateQuestionSetResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def WriteGeneratedQuestions(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/WriteGeneratedQuestions',
-            submission__pb2.WriteGeneratedQuestionsRequest.SerializeToString,
-            submission__pb2.WriteGeneratedQuestionsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetGeneratedQuestionsWithAnswers(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/GetGeneratedQuestionsWithAnswers',
-            submission__pb2.GetGeneratedQuestionsRequest_.SerializeToString,
-            submission__pb2.GetGeneratedQuestionsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def IncrementQuestionSetIteration(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/IncrementQuestionSetIteration',
-            submission__pb2.IncrementIterationRequest.SerializeToString,
-            submission__pb2.IncrementIterationResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetApprovedQuestionsWithAnswers(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/GetApprovedQuestionsWithAnswers',
-            submission__pb2.GetApprovedQuestionsRequest.SerializeToString,
-            submission__pb2.GetApprovedQuestionsResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def CreateEvaluation(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/CreateEvaluation',
-            submission__pb2.CreateEvaluationRequest.SerializeToString,
-            submission__pb2.CreateEvaluationResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def CreateGroupEvaluation(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/CreateGroupEvaluation',
-            submission__pb2.CreateGroupEvaluationRequest.SerializeToString,
-            submission__pb2.CreateGroupEvaluationResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def GetEvaluation(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/GetEvaluation',
-            submission__pb2.GetEvaluationRequest.SerializeToString,
-            submission__pb2.GetEvaluationResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def CreateReport(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/CreateReport',
-            submission__pb2.CreateReportRequest.SerializeToString,
-            submission__pb2.CreateReportResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def UploadWebResearchMaterials(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/UploadWebResearchMaterials',
-            submission__pb2.UploadWebResearchRequest.SerializeToString,
-            submission__pb2.UploadWebResearchResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def StartWorkflow(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/assessorflow.submission.v1.SubmissionService/StartWorkflow',
-            submission__pb2.StartWorkflowRequest.SerializeToString,
-            submission__pb2.StartWorkflowResponse.FromString,
             options,
             channel_credentials,
             insecure,

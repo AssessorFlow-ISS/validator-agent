@@ -1,8 +1,7 @@
 """Tests for the ValidatorService — end-to-end validation pipeline.
 
-Uses stub_pipeline_fn to simulate Thet's 3-component pipeline without
-external calls. The stub uses keyword detection matching the old
-StubModelBrokerAdapter behavior (harmful/PII/copyright detection).
+Uses stub_pipeline_fn to simulate the 3-component pipeline without
+external calls. The stub uses keyword detection for harmful/PII/copyright.
 """
 from __future__ import annotations
 
@@ -92,7 +91,7 @@ def _build_service(
             ocr_text=ocr_text,
         )
 
-    from af_shared.adapters.stubs.tracing_stub import StubTracingAdapter
+    from validator_agent.adapters.tracing_stub import StubTracingAdapter
 
     service = ValidatorService(
         knowledge_service=ks,

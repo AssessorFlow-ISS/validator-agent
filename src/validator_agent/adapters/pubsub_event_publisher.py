@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from af_shared.pubsub.agent_subscriber import AgentPubSubSubscriber
+from validator_agent.adapters.pubsub_subscriber import AgentPubSubSubscriber
 
 from validator_agent.ports.event_publisher_port import EventPublisherPort
 
@@ -27,15 +27,10 @@ class PubSubEventPublisherAdapter(AgentPubSubSubscriber, EventPublisherPort):
     name differs.
     """
 
-    def __init__(
-        self,
-        project_id: str | None = None,
-        emulator_host: str | None = None,
-    ) -> None:
+    def __init__(self, project_id: str | None = None) -> None:
         super().__init__(
             agent_name="validator-agent",
             project_id=project_id,
-            emulator_host=emulator_host,
         )
 
     async def publish(self, *, topic: str, payload: dict[str, Any]) -> None:

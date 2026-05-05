@@ -1,0 +1,153 @@
+# ──────────────────────────────────────────────────────────────
+# CI — Continuous Integration (every PR + push to main)
+#
+# All quality gates that must pass before merging:
+#   1. Code Quality    — ruff lint + format, mypy type check
+#   2. Functional      — pytest (317 tests, 80% coverage gate)
+#   3. AI Security     — guardrail regression (60 tests, $0)
+#                        DeepEval smoke (6 cases, 4 metrics, ~$0.40)
+#                        Promptfoo OWASP red team (10 cases, ~$0.10)
+#   4. AppSec          — pip-audit (SCA), trufflehog (secrets), zizmor (CI injection)
+#   5. Container       — Containerfile build + Trivy scan (CRITICAL/HIGH = fail)
+# ──────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. Code Quality ──────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - run: uv sync --all-extras --dev
+
+      - name: Ruff check
+        run: uv run ruff check src/ tests/
+
+      - name: Ruff format
+        run: uv run ruff format --check src/ tests/
+
+  type-check:
+    name: Type Check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - run: uv sync --all-extras --dev
+
+      - name: mypy
+        run: uv run mypy src/.
+
+  # ── 2. Functional Tests + 3. AI Security Tests ──────────────
+  test:
+    name: Tests + AI Security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - run: uv sync --all-extras --dev
+
+      # 2. Functional Tests (317 tests, 80% coverage gate)
+      - name: Unit + Integration Tests
+        run: uv run pytest tests/ -v --ignore=tests/eval --ignore=tests/golden --cov=validator_agent --cov-report=xml --cov-fail-under=80
+
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+      # 3a. Guardrail Regression (60 deterministic tests, $0)
+      - name: Guardrail Regression
+        run: uv run pytest tests/test_guardrails.py -v
+
+      # 3b. DeepEval Smoke (6 cases, 4 GEval metrics, ~$0.40)
+      - name: DeepEval Smoke
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONFIDENT_API_KEY: ${{ secrets.CONFIDENT_API_KEY }}
+        run: uv run --extra eval deepeval test run tests/eval/test_deepeval.py -k "smoke"
+
+      # 3c. Promptfoo OWASP Red Team (10 cases, LLM01/02/07/09, ~$0.10)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Promptfoo OWASP
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cd tests/eval
+          npx promptfoo eval
+
+  # ── 4. Application Security ─────────────────────────────────
+  security:
+    name: AppSec (SCA + Secrets + CI)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras --dev
+
+      # SCA — dependency CVE scan
+      - name: pip-audit (SCA)
+        run: |
+          uv export --no-dev --no-emit-project > requirements.txt
+          uv run pip-audit --requirement=requirements.txt --desc
+
+      # Secret scanning — full git history
+      - name: trufflehog (Secrets)
+        uses: trufflesecurity/trufflehog@v3
+        with:
+          extra_args: --exclude-detectors=Postgres
+
+      # CI/CD workflow injection scan
+      - name: zizmor (CI Security)
+        uses: zizmorcore/zizmor-action@v0
+        with:
+          advanced-security: false
+
+  # ── 5. Container Security ───────────────────────────────────
+  container:
+    name: Container Build + Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          push: false
+          load: true
+          tags: validator-agent:test
+
+      - name: Trivy scan (CRITICAL + HIGH = fail)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: validator-agent:test
+          format: table
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'

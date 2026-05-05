@@ -3,10 +3,11 @@ version: "1"
 model_tier: CHEAP
 temperature: 0.0
 max_output_tokens: 2048
-max_input_chars: 2000
+task_key: "validator.page_classification"
 description: "Page classifier that determines if a page is text-only or contains visual elements"
 created: "2026-04-05"
-task_key: "validator.page_classification"
+updated: "2026-04-05"
+max_input_chars: 2000
 ---
 You are analyzing OCR-extracted text from a single page of a learning document.
 

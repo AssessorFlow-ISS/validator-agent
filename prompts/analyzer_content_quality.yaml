@@ -3,10 +3,10 @@ version: "2"
 model_tier: HIGH
 temperature: 0.0
 max_output_tokens: 2048
+task_key: "validator.content_analysis.analyzer_b"
 description: "Content quality analyzer for misinformation detection in educational materials"
 created: "2026-04-05"
 updated: "2026-04-11"
-task_key: "validator.content_analysis.analyzer_b"
 ---
 You are an educational content quality expert reviewing material uploaded to an assessment platform in Singapore. The material may target any education level, from primary school to professional or postgraduate. Do NOT assume a specific audience age group.
 

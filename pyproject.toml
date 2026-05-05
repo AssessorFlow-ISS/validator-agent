@@ -27,6 +27,7 @@ dependencies = [
     "grpcio>=1.74.0",
     "grpcio-tools>=1.74.0",
     "protobuf>=5.29.0",
+    "langfuse>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +43,12 @@ dev = [
     "mypy",
     "ruff",
     "asyncpg>=0.30.0",
+]
+eval = [
+    "deepeval>=2.0",
+    "deepteam>=0.1",
+    "fpdf2>=2.8",
+    "pytest-html>=4.0",
 ]
 audit = [
     "pip-audit>=2.0",

@@ -1,0 +1,58 @@
+# ──────────────────────────────────────────────────────────────
+# Security Scan — Weekly scheduled scan
+#
+# Catches newly disclosed CVEs in dependencies and newly leaked
+# secrets even when no code changes. Runs every Tuesday 9:15am SGT.
+# ──────────────────────────────────────────────────────────────
+name: Security Scan (Weekly)
+
+on:
+  schedule:
+    - cron: "15 1 * * 2"  # Every Tuesday 9:15am SGT (UTC+8)
+  workflow_dispatch:       # Manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  sca:
+    name: SCA — pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - run: uv sync --all-extras --dev
+
+      - name: Export locked requirements
+        run: uv export --no-dev --no-emit-project > requirements.txt
+
+      - name: pip-audit
+        run: uv run pip-audit --requirement=requirements.txt --desc
+
+  secret-scanning:
+    name: Secret Scanning — trufflehog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: trufflehog
+        uses: trufflesecurity/trufflehog@v3
+        with:
+          extra_args: --exclude-detectors=Postgres
+
+  workflow-security:
+    name: Workflow Security — zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@v0
+        with:
+          advanced-security: false

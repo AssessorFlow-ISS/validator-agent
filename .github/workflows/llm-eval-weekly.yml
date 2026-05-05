@@ -1,0 +1,80 @@
+# ──────────────────────────────────────────────────────────────
+# LLM Quality Monitor — Weekly scheduled evaluation
+#
+# Post-deployment drift detection. Runs the full evaluation suite
+# weekly to catch LLM provider model updates that silently degrade
+# output quality — even when no code or prompt changes occur.
+#
+# Results upload to Confident AI Test Runs for score trend tracking.
+# A sustained quality drop across runs signals LLM provider drift.
+#
+# Schedule: Every Tuesday 9:15am SGT
+# Cost: ~$2-3 per run (18 golden items + 12 DeepEval cases)
+# ──────────────────────────────────────────────────────────────
+name: LLM Quality Monitor (Weekly)
+
+on:
+  schedule:
+    - cron: "15 1 * * 2"  # Every Tuesday 9:15am SGT (UTC+8)
+  workflow_dispatch:       # Manual trigger
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: Full LLM Evaluation Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - run: uv sync --all-extras --dev
+
+      # Authenticate to GCP (for GCS golden dataset + Document AI)
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # Pull versioned golden dataset from GCS
+      - name: Pull golden dataset from GCS
+        run: gsutil -m rsync -r gs://assessorflow-validator-golden/latest/ tests/golden/
+
+      # 1. Guardrail Regression (60 tests, $0)
+      - name: Guardrail Regression
+        run: uv run pytest tests/test_guardrails.py -v
+
+      # 2. DeepEval Full Suite (12 cases, 4 GEval metrics)
+      #    Results auto-upload to Confident AI Test Runs
+      - name: DeepEval Full Suite
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONFIDENT_API_KEY: ${{ secrets.CONFIDENT_API_KEY }}
+        run: uv run --extra eval deepeval test run tests/eval/test_deepeval.py
+
+      # 3. Golden Dataset Regression (18 items through real pipeline)
+      #    Results auto-upload to Confident AI Test Runs
+      - name: Golden Dataset Regression
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONFIDENT_API_KEY: ${{ secrets.CONFIDENT_API_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_LOCATION: asia-southeast1
+          DOCUMENTAI_PROCESSOR_ID: ${{ secrets.DOCUMENTAI_PROCESSOR_ID }}
+        run: |
+          uv run --extra eval deepeval test run \
+            tests/eval/test_golden_regression.py \
+            --identifier "validator_agent_golden_set"
+
+      # 4. Promptfoo OWASP Red Team (10 cases)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Promptfoo OWASP
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cd tests/eval
+          npx promptfoo eval
