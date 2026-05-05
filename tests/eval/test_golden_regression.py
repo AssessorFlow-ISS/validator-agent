@@ -157,6 +157,23 @@ for golden in _dataset.goldens:
 _metric_scores: dict[str, list[float]] = {}
 
 
+def _write_scores():
+    """Write average metric scores to JSON for regression gate comparison."""
+    if not _metric_scores:
+        return
+    import json
+
+    averages = {name: round(sum(scores) / len(scores), 2) for name, scores in _metric_scores.items()}
+    scores_file = GOLDEN_DIR / "current_scores.json"
+    scores_file.write_text(json.dumps(averages, indent=2) + "\n")
+    print(f"\nMetric averages written to {scores_file}: {averages}")
+
+
+import atexit
+
+atexit.register(_write_scores)
+
+
 @pytest.mark.parametrize(
     "case_id,category,file_path,expected",
     _test_params,
@@ -180,15 +197,3 @@ def test_golden_item(case_id, category, file_path, expected):
             _metric_scores.setdefault(metric.name, []).append(metric.score)
 
     assert_test(tc, metrics)
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """Write average metric scores to JSON for regression gate comparison."""
-    import json
-
-    if not _metric_scores:
-        return
-    averages = {name: round(sum(scores) / len(scores), 2) for name, scores in _metric_scores.items()}
-    scores_file = GOLDEN_DIR / "current_scores.json"
-    scores_file.write_text(json.dumps(averages, indent=2) + "\n")
-    print(f"\nMetric averages written to {scores_file}: {averages}")
