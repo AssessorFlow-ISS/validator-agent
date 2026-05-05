@@ -16,6 +16,7 @@ Usage:
   uv run --extra eval pytest tests/eval/test_deepeval.py -v -k "smoke"
   uv run --extra eval pytest tests/eval/test_deepeval.py -v
 """
+
 import hashlib
 import sys
 from pathlib import Path
@@ -23,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from deepeval import assert_test
@@ -30,15 +32,18 @@ from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
 from validator_agent.pipeline.content_safety import check_content_safety
+from validator_agent.pipeline.llm_client import flush_trace, set_workflow_context
 from validator_agent.pipeline.models import PageOcrResult
-from validator_agent.pipeline.llm_client import set_workflow_context, flush_trace
 
 # Langfuse for score pushing + dataset linking
 try:
     from langfuse import Langfuse
+
     _lf = Langfuse()
     _dataset = _lf.get_dataset("validator-golden-v1")
-    _dataset_items = {item.input.get("category", "") + "/" + item.input.get("topic", ""): item for item in _dataset.items}
+    _dataset_items = {
+        item.input.get("category", "") + "/" + item.input.get("topic", ""): item for item in _dataset.items
+    }
 except Exception:
     _lf = None
     _dataset_items = {}
@@ -94,16 +99,19 @@ def _run_and_score(test_name: str, text: str, expected: str, metrics: list):
 # HELPER — run real pipeline
 # ═══════════════════════════════════════════════════════════════
 
+
 def run_pipeline(text: str) -> str:
     """Run text through the real content safety pipeline and return formatted output."""
-    pages = [PageOcrResult(
-        page_number=1,
-        extracted_text=text,
-        word_count=len(text.split()),
-        confidence=1.0,
-        classification="TEXT",
-        source="deepeval_test",
-    )]
+    pages = [
+        PageOcrResult(
+            page_number=1,
+            extracted_text=text,
+            word_count=len(text.split()),
+            confidence=1.0,
+            classification="TEXT",
+            source="deepeval_test",
+        )
+    ]
 
     result = check_content_safety(pages)
 
@@ -146,8 +154,15 @@ def run_pipeline(text: str) -> str:
     if result.assessor_warnings:
         parts.append(f"Assessor warnings: {len(result.assessor_warnings)}.")
 
-    if not any([result.harmful_findings, result.pii_findings, result.copyright_findings,
-                result.religious_political_findings, result.misinformation_findings]):
+    if not any(
+        [
+            result.harmful_findings,
+            result.pii_findings,
+            result.copyright_findings,
+            result.religious_political_findings,
+            result.misinformation_findings,
+        ]
+    ):
         parts.append("No issues found.")
 
     return " ".join(parts)
@@ -203,13 +218,12 @@ faithfulness_metric = GEval(
 )
 
 
-
 # ═══════════════════════════════════════════════════════════════
 # SMOKE CASES (6 — run on every PR)
 # ═══════════════════════════════════════════════════════════════
 
-class TestSmokeSafety:
 
+class TestSmokeSafety:
     def test_smoke_clean_document(self):
         _run_and_score(
             "smoke-clean-document",
@@ -263,8 +277,8 @@ class TestSmokeSafety:
 # FULL GOLDEN CASES (run at milestones)
 # ═══════════════════════════════════════════════════════════════
 
-class TestGoldenSafetyDetection:
 
+class TestGoldenSafetyDetection:
     def test_religious_political_sg(self):
         _run_and_score(
             "golden-religious-political",
@@ -283,7 +297,6 @@ class TestGoldenSafetyDetection:
 
 
 class TestGoldenPiiDetection:
-
     def test_sg_nric_variants(self):
         _run_and_score(
             "golden-nric-variants",
@@ -302,7 +315,6 @@ class TestGoldenPiiDetection:
 
 
 class TestGoldenActionable:
-
     def test_actionable_pii_message(self):
         _run_and_score(
             "golden-actionable-pii",

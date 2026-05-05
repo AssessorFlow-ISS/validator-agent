@@ -3,6 +3,7 @@
 Stores all log_decision calls so tests can verify the immutable audit
 trail is being populated correctly.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,9 +37,11 @@ class StubDecisionAuditAdapter(DecisionAuditPort):
         payload: dict[str, Any],
     ) -> None:
         """Record the audit log entry without persisting."""
-        self.entries.append(AuditLogEntry(
-            workflow_id=workflow_id,
-            agent_name=agent_name,
-            decision_type=decision_type,
-            payload=payload,
-        ))
+        self.entries.append(
+            AuditLogEntry(
+                workflow_id=workflow_id,
+                agent_name=agent_name,
+                decision_type=decision_type,
+                payload=payload,
+            )
+        )

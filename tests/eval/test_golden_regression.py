@@ -10,6 +10,7 @@ Usage:
   # Via pytest (local only)
   uv run --extra eval pytest tests/eval/test_golden_regression.py -v
 """
+
 import os
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from dotenv import load_dotenv
+
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from deepeval import assert_test
@@ -27,9 +29,9 @@ from deepeval.metrics import GEval
 from deepeval.test_case import LLMTestCase, LLMTestCaseParams
 
 from validator_agent.pipeline.content_safety import check_content_safety
-from validator_agent.pipeline.models import PageOcrResult
-from validator_agent.pipeline.llm_client import set_workflow_context, flush_trace
 from validator_agent.pipeline.documentai_client import extract_with_documentai_bytes
+from validator_agent.pipeline.llm_client import flush_trace, set_workflow_context
+from validator_agent.pipeline.models import PageOcrResult
 
 GOLDEN_DIR = Path(__file__).parent.parent / "golden"
 DATASET_ALIAS = "validator-golden-latest"
@@ -73,7 +75,8 @@ CATEGORY_METRICS = {
 def _extract_text(pdf_path: Path) -> str:
     try:
         r = extract_with_documentai_bytes(
-            file_bytes=pdf_path.read_bytes(), file_name=pdf_path.name,
+            file_bytes=pdf_path.read_bytes(),
+            file_name=pdf_path.name,
             project_id=os.getenv("GCP_PROJECT_ID", "aflow-491809"),
             location=os.getenv("GCP_LOCATION", "asia-southeast1"),
             processor_id=os.getenv("DOCUMENTAI_PROCESSOR_ID", "c1b7d7b45d4a3113"),
@@ -83,12 +86,21 @@ def _extract_text(pdf_path: Path) -> str:
     except Exception:
         pass
     from pypdf import PdfReader
+
     return "\n\n".join(p.extract_text() or "" for p in PdfReader(str(pdf_path)).pages)
 
 
 def _run_pipeline(text: str) -> str:
-    pages = [PageOcrResult(page_number=1, extracted_text=text, word_count=len(text.split()),
-                           confidence=1.0, classification="TEXT", source="golden_regression")]
+    pages = [
+        PageOcrResult(
+            page_number=1,
+            extracted_text=text,
+            word_count=len(text.split()),
+            confidence=1.0,
+            classification="TEXT",
+            source="golden_regression",
+        )
+    ]
     result = check_content_safety(pages)
     parts = [f"{result.overall_status}."]
     if result.termination_reason:
@@ -109,8 +121,15 @@ def _run_pipeline(text: str) -> str:
         parts.append(f"Copyright findings: {len(result.copyright_findings)}.")
         for f in result.copyright_findings:
             parts.append(f"  Page {f.page}: {f.detail}")
-    if not any([result.harmful_findings, result.pii_findings, result.copyright_findings,
-                result.religious_political_findings, result.misinformation_findings]):
+    if not any(
+        [
+            result.harmful_findings,
+            result.pii_findings,
+            result.copyright_findings,
+            result.religious_political_findings,
+            result.misinformation_findings,
+        ]
+    ):
         parts.append("No issues found.")
     return " ".join(parts)
 
@@ -138,8 +157,11 @@ for golden in _dataset.goldens:
 _metric_scores: dict[str, list[float]] = {}
 
 
-@pytest.mark.parametrize("case_id,category,file_path,expected", _test_params,
-                         ids=[f"{p[0]:02d}-{p[1]}" if isinstance(p[0], int) else f"{p[0]}-{p[1]}" for p in _test_params])
+@pytest.mark.parametrize(
+    "case_id,category,file_path,expected",
+    _test_params,
+    ids=[f"{p[0]:02d}-{p[1]}" if isinstance(p[0], int) else f"{p[0]}-{p[1]}" for p in _test_params],
+)
 def test_golden_item(case_id, category, file_path, expected):
     """Run a single golden dataset item through the real pipeline."""
     set_workflow_context(f"validator_agent_golden_set/{case_id}-{category}")
@@ -163,6 +185,7 @@ def test_golden_item(case_id, category, file_path, expected):
 def pytest_sessionfinish(session, exitstatus):
     """Write average metric scores to JSON for regression gate comparison."""
     import json
+
     if not _metric_scores:
         return
     averages = {name: round(sum(scores) / len(scores), 2) for name, scores in _metric_scores.items()}

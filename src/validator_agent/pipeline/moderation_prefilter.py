@@ -35,9 +35,7 @@ def check_moderation(text: str) -> ModerationCheckResult:
         )
 
         result = response.results[0]
-        flagged_categories = [
-            cat for cat, flagged in result.categories.model_dump().items() if flagged
-        ]
+        flagged_categories = [cat for cat, flagged in result.categories.model_dump().items() if flagged]
 
         check_result = ModerationCheckResult(
             flagged=result.flagged,
@@ -46,6 +44,7 @@ def check_moderation(text: str) -> ModerationCheckResult:
 
         # Langfuse trace (fire-and-forget)
         from validator_agent.pipeline.llm_client import trace_tool
+
         trace_tool(
             tool_name="openai-moderation-prefilter",
             input_params={"text_length": len(truncated)},

@@ -158,6 +158,7 @@ def _build_result(
 
     # Langfuse trace (fire-and-forget)
     from validator_agent.pipeline.llm_client import trace_tool
+
     trace_tool(
         tool_name="documentai-ocr",
         input_params={"file_name": file_name, "processing_mode": processing_mode},
@@ -194,8 +195,10 @@ def extract_with_documentai_bytes(
         mime_type = _get_mime_type(file_name)
     except ValueError as e:
         return OcrResult(
-            file_name=file_name, total_pages=0,
-            ocr_time_ms=time.time() * 1000 - start_ms, error_message=str(e),
+            file_name=file_name,
+            total_pages=0,
+            ocr_time_ms=time.time() * 1000 - start_ms,
+            error_message=str(e),
         )
 
     client = documentai.DocumentProcessorServiceClient(
@@ -233,7 +236,8 @@ def extract_with_documentai_bytes(
             return _build_result(file_name, all_pages, start_ms, "online")
     except Exception as e:
         return OcrResult(
-            file_name=file_name, total_pages=0,
+            file_name=file_name,
+            total_pages=0,
             ocr_time_ms=time.time() * 1000 - start_ms,
             error_message=f"Document AI processing error: {e}",
         )
@@ -253,15 +257,18 @@ def extract_with_documentai_gcs(
         _get_mime_type(file_name)
     except ValueError as e:
         return OcrResult(
-            file_name=file_name, total_pages=0,
-            ocr_time_ms=time.time() * 1000 - start_ms, error_message=str(e),
+            file_name=file_name,
+            total_pages=0,
+            ocr_time_ms=time.time() * 1000 - start_ms,
+            error_message=str(e),
         )
 
     try:
         file_bytes = _download_from_gcs(gcs_input_uri)
     except Exception as e:
         return OcrResult(
-            file_name=file_name, total_pages=0,
+            file_name=file_name,
+            total_pages=0,
             ocr_time_ms=time.time() * 1000 - start_ms,
             error_message=f"Failed to download from GCS: {e}",
         )

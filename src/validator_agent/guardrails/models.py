@@ -4,6 +4,7 @@ Inlined from af_shared.guardrails.models.
 All guardrail scanning results are expressed as dataclasses for lightweight,
 zero-dependency usage.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ class GuardrailViolation:
         matched_text: The text that triggered the violation (redacted if PII).
         severity: Severity level: "high", "medium", or "low".
     """
+
     category: str
     pattern_name: str
     matched_text: str
@@ -37,6 +39,7 @@ class GuardrailResult:
         scan_type: Either "input" (pre-LLM) or "output" (post-LLM).
         latency_ms: Time taken for the scan in milliseconds.
     """
+
     passed: bool
     violations: list[GuardrailViolation] = field(default_factory=list)
     scan_type: str = "input"

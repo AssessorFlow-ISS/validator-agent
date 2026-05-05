@@ -5,6 +5,7 @@ adapters — zero external dependencies.  Covers PROCEED, TERMINATE (SC-INT-04
 through SC-INT-08), Terminal Signal structure invariants, and decision audit
 logging.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -35,6 +36,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_request(
     *,
@@ -77,10 +79,10 @@ def _build_service(
         mrc_confidence = 0.95
         ocr_text = None
         if mrc is not None:
-            mrc_readiness = getattr(mrc, '_default_readiness', True)
-            mrc_confidence = getattr(mrc, '_default_confidence', 0.95)
+            mrc_readiness = getattr(mrc, "_default_readiness", True)
+            mrc_confidence = getattr(mrc, "_default_confidence", 0.95)
         if ocr is not None:
-            ocr_text = getattr(ocr, '_default_text', None)
+            ocr_text = getattr(ocr, "_default_text", None)
         pipeline_fn = make_stub_pipeline(
             mrc_readiness=mrc_readiness,
             mrc_confidence=mrc_confidence,
@@ -103,6 +105,7 @@ def _build_service(
 # ===========================================================================
 # PROCEED scenarios
 # ===========================================================================
+
 
 class TestProceedScenarios:
     """Clean material that passes MRC + OCR + content safety must PROCEED."""
@@ -141,6 +144,7 @@ class TestProceedScenarios:
 # ===========================================================================
 # TERMINATE scenarios (SC-INT-04 through SC-INT-08)
 # ===========================================================================
+
 
 class TestTerminateBlurry:
     """SC-INT-04: Blurry/unreadable material triggers MRC TERMINATE."""
@@ -213,6 +217,7 @@ class TestTerminateOcrFailed:
 # ===========================================================================
 # Terminal Signal structure invariants
 # ===========================================================================
+
 
 class TestTerminalSignalStructure:
     """Validate the Terminal Signal contract across all outcome paths."""
@@ -296,6 +301,7 @@ class TestTerminalSignalStructure:
 # Decision audit logging
 # ===========================================================================
 
+
 class TestDecisionAuditLogging:
     """Every validation must produce exactly one audit log entry."""
 
@@ -355,6 +361,7 @@ class TestDecisionAuditLogging:
 # ===========================================================================
 # GAP-10: Multi-file partial TERMINATE scenarios
 # ===========================================================================
+
 
 def _make_multi_file_request(
     *,
@@ -537,7 +544,8 @@ class TestMultiFilePartialTerminate:
             """MRC fails for file 2 only."""
             if file_name == "document_2.pdf":
                 return make_stub_pipeline(
-                    mrc_readiness=False, mrc_confidence=0.15,
+                    mrc_readiness=False,
+                    mrc_confidence=0.15,
                 )(file_bytes, file_name)
             return stub_pipeline_fn(file_bytes, file_name)
 
@@ -565,15 +573,15 @@ class TestMultiFilePartialTerminate:
         """
         request, files = _make_multi_file_request()
         harmful_text = (
-            "This extremist manifesto contains bomb-making instructions "
-            "and weapon details that are dangerous."
+            "This extremist manifesto contains bomb-making instructions and weapon details that are dangerous."
         )
 
         def _per_file_pipeline(file_bytes: bytes, file_name: str) -> ValidatorResult:
             """File 1 blurry, file 2 harmful, file 3 clean."""
             if file_name == "document_1.pdf":
                 return make_stub_pipeline(
-                    mrc_readiness=False, mrc_confidence=0.12,
+                    mrc_readiness=False,
+                    mrc_confidence=0.12,
                 )(file_bytes, file_name)
             return stub_pipeline_fn(file_bytes, file_name)
 
@@ -606,8 +614,7 @@ class TestMultiFilePartialTerminate:
         """
         request, files = _make_multi_file_request()
         harmful_text = (
-            "This extremist manifesto contains dangerous weapon content "
-            "that should trigger content safety detection."
+            "This extremist manifesto contains dangerous weapon content that should trigger content safety detection."
         )
         clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
         storage = StubStorageAdapter(
@@ -646,8 +653,7 @@ class TestMultiFilePartialTerminate:
         """
         request, files = _make_multi_file_request(file_count=5)
         harmful_text = (
-            "This bomb-making manifesto describes weapon construction "
-            "methods and extremist recruitment strategies."
+            "This bomb-making manifesto describes weapon construction methods and extremist recruitment strategies."
         )
         clean_bytes = FIXTURES_DIR.joinpath("clean_document.txt").read_bytes()
         storage = StubStorageAdapter(

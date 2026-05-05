@@ -78,9 +78,7 @@ def synthesize_findings(
     # expected, not suspicious. The synthesizer LLM incorrectly discards these
     # single-source findings. Other analyzers (A, B, D) still go through
     # synthesis for cross-verification.
-    non_c_findings = (
-        all_findings["analyzer_a"] + all_findings["analyzer_b"] + all_findings["analyzer_d"]
-    )
+    non_c_findings = all_findings["analyzer_a"] + all_findings["analyzer_b"] + all_findings["analyzer_d"]
     if not non_c_findings and all_findings["analyzer_c"]:
         # PII type -> redaction token mapping
         _REDACT_MAP = {
@@ -137,7 +135,12 @@ def _merge_without_synthesis(
 ) -> SynthesisResult:
     """Fallback: merge all findings without LLM synthesis."""
     all_findings = []
-    for result in [analyzer_results.analyzer_a, analyzer_results.analyzer_b, analyzer_results.analyzer_c, analyzer_results.analyzer_d]:
+    for result in [
+        analyzer_results.analyzer_a,
+        analyzer_results.analyzer_b,
+        analyzer_results.analyzer_c,
+        analyzer_results.analyzer_d,
+    ]:
         for f in result.findings:
             f_copy = dict(f)
             f_copy["confidence"] = "unverified"

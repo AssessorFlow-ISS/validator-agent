@@ -4,6 +4,7 @@ Default behavior: readiness=True, confidence=0.95.
 Per-file overrides can be configured at construction time for testing
 specific failure scenarios.
 """
+
 from __future__ import annotations
 
 from validator_agent.ports.mrc_port import MrcPort, MrcResult

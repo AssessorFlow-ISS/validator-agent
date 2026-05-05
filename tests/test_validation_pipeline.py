@@ -3,6 +3,7 @@
 Uses stub_pipeline_fn to simulate the 3-component pipeline without
 external calls. The stub uses keyword detection for harmful/PII/copyright.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -79,11 +80,11 @@ def _build_service(
         ocr_text = None
 
         if mrc is not None:
-            mrc_readiness = getattr(mrc, '_default_readiness', True)
-            mrc_confidence = getattr(mrc, '_default_confidence', 0.95)
+            mrc_readiness = getattr(mrc, "_default_readiness", True)
+            mrc_confidence = getattr(mrc, "_default_confidence", 0.95)
 
         if ocr is not None:
-            ocr_text = getattr(ocr, '_default_text', None)
+            ocr_text = getattr(ocr, "_default_text", None)
 
         pipeline_fn = make_stub_pipeline(
             mrc_readiness=mrc_readiness,
@@ -239,9 +240,11 @@ class TestValidationPipelineMultipleFiles:
 
     async def test_one_file_fails_overall_terminates(self) -> None:
         harmful = (FIXTURES_DIR / "harmful_content.txt").read_text()
-        storage = StubStorageAdapter(overrides={
-            "materials/wf-test-001/bad.pdf": harmful.encode(),
-        })
+        storage = StubStorageAdapter(
+            overrides={
+                "materials/wf-test-001/bad.pdf": harmful.encode(),
+            }
+        )
         service, *_ = _build_service(storage=storage)
         files = [
             FileInfo(file_name="good.pdf", storage_path="materials/wf-test-001/good.pdf", file_type="pdf"),

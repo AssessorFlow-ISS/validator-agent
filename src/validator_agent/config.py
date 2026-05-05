@@ -16,6 +16,7 @@ Environment Variables:
                        decisions via Submission Service gRPC. Set to
                        "stub" in tests to bypass the network.
 """
+
 from __future__ import annotations
 
 import os

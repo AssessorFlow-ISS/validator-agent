@@ -21,15 +21,13 @@ from datetime import UTC, datetime
 
 import structlog
 
-from validator_agent.domain.audit_models import DecisionLogEntry
-from validator_agent.ports.tracing_port import TracingPort
-
 from validator_agent.api.schemas import (
     FileInfo,
     FileResult,
     ValidationRequest,
     ValidationResponse,
 )
+from validator_agent.domain.audit_models import DecisionLogEntry
 from validator_agent.domain.terminal_signal import (
     ReasonCode,
     TerminalSignal,
@@ -39,6 +37,7 @@ from validator_agent.ports.decision_audit_port import DecisionAuditPort
 from validator_agent.ports.event_publisher_port import EventPublisherPort
 from validator_agent.ports.knowledge_service_port import KnowledgeServicePort
 from validator_agent.ports.storage_port import StoragePort
+from validator_agent.ports.tracing_port import TracingPort
 
 logger = structlog.get_logger(__name__)
 
@@ -125,7 +124,10 @@ class ValidatorService:
 
         # Forward cleaned text to Knowledge Service on PROCEED
         chunk_ids = await self._forward_to_knowledge_service(
-            request, overall_signal, all_cleaned_text, reasoning_steps,
+            request,
+            overall_signal,
+            all_cleaned_text,
+            reasoning_steps,
         )
 
         # Content fitness score
@@ -152,7 +154,10 @@ class ValidatorService:
     # ─── Single File Validation ───────────────────────────────────
 
     async def _validate_single_file(
-        self, *, file_info: FileInfo, workflow_id: str,
+        self,
+        *,
+        file_info: FileInfo,
+        workflow_id: str,
     ) -> tuple[FileResult, object]:
         """Validate a single file: download -> pipeline -> map result -> trace."""
         file_bytes = await self._storage.download_file(file_info.storage_path)
@@ -164,6 +169,7 @@ class ValidatorService:
 
         # Set workflow context for LLM token tracking
         from validator_agent.pipeline.llm_client import set_workflow_context
+
         set_workflow_context(workflow_id)
 
         # Run pipeline (stub for tests, real for production)
@@ -171,13 +177,17 @@ class ValidatorService:
             raw = await asyncio.to_thread(self._pipeline_fn, file_bytes, file_info.file_name)
         else:
             from validator_agent.pipeline.validator_pipeline import validate_file
+
             raw = await asyncio.to_thread(validate_file, file_bytes, file_info.file_name)
 
         result = self._map_to_result(file_info, raw)
         return result, raw
 
     async def _validate_text_file(
-        self, file_bytes: bytes, file_info: FileInfo, workflow_id: str,
+        self,
+        file_bytes: bytes,
+        file_info: FileInfo,
+        workflow_id: str,
     ) -> object:
         """Validate text file (.md, .txt) — content safety only."""
         from validator_agent.pipeline.content_safety import check_content_safety
@@ -192,10 +202,16 @@ class ValidatorService:
         logger.info("text_file_validation", file_name=file_info.file_name, word_count=word_count)
 
         try:
-            pages = [PageOcrResult(
-                page_number=1, extracted_text=text, word_count=word_count,
-                confidence=1.0, classification="TEXT", source="web_research",
-            )]
+            pages = [
+                PageOcrResult(
+                    page_number=1,
+                    extracted_text=text,
+                    word_count=word_count,
+                    confidence=1.0,
+                    classification="TEXT",
+                    source="web_research",
+                )
+            ]
             safety_result = await asyncio.to_thread(check_content_safety, pages)
             elapsed = time.time() * 1000 - start_ms
 
@@ -227,7 +243,8 @@ class ValidatorService:
         status = _STATUS_MAP.get(raw.overall_status, TerminalSignalStatus.TERMINATE)
         reason_code = _REASON_CODE_MAP.get(
             raw.termination_reason,
-            ReasonCode.VALIDATION_PASSED if status != TerminalSignalStatus.TERMINATE
+            ReasonCode.VALIDATION_PASSED
+            if status != TerminalSignalStatus.TERMINATE
             else ReasonCode.CONTENT_POLICY_VIOLATION,
         )
         message = raw.termination_detail or f"Document {file_info.file_name} validated: {raw.overall_status}"
@@ -235,8 +252,10 @@ class ValidatorService:
         signal = TerminalSignal(status=status, reason_code=reason_code, message=message[:500])
 
         logger.info(
-            "validation_complete", file_name=file_info.file_name,
-            status=raw.overall_status, reason=raw.termination_reason,
+            "validation_complete",
+            file_name=file_info.file_name,
+            status=raw.overall_status,
+            reason=raw.termination_reason,
             time_ms=raw.total_time_ms,
         )
 
@@ -259,10 +278,7 @@ class ValidatorService:
             if result.terminal_signal.status == TerminalSignalStatus.TERMINATE:
                 return result.terminal_signal
 
-        has_warnings = any(
-            r.terminal_signal.status == TerminalSignalStatus.PROCEED_WITH_WARNINGS
-            for r in file_results
-        )
+        has_warnings = any(r.terminal_signal.status == TerminalSignalStatus.PROCEED_WITH_WARNINGS for r in file_results)
         if has_warnings:
             return TerminalSignal(
                 status=TerminalSignalStatus.PROCEED_WITH_WARNINGS,
@@ -279,8 +295,11 @@ class ValidatorService:
     # ─── Knowledge Service Forwarding ─────────────────────────────
 
     async def _forward_to_knowledge_service(
-        self, request: ValidationRequest, overall_signal: TerminalSignal,
-        all_cleaned_text: list[str], reasoning_steps: list[dict],
+        self,
+        request: ValidationRequest,
+        overall_signal: TerminalSignal,
+        all_cleaned_text: list[str],
+        reasoning_steps: list[dict],
     ) -> list[str]:
         """Forward cleaned text to Knowledge Service on PROCEED."""
         if overall_signal.status == TerminalSignalStatus.TERMINATE:
@@ -302,14 +321,17 @@ class ValidatorService:
         )
 
         if chunk_ids:
-            reasoning_steps.append({
-                "step": len(reasoning_steps) + 1,
-                "action": f"Content fit: PROCEED — stored {len(chunk_ids)} chunks to Knowledge Service",
-                "component": "kb_write",
-                "chunks_stored": len(chunk_ids),
-            })
+            reasoning_steps.append(
+                {
+                    "step": len(reasoning_steps) + 1,
+                    "action": f"Content fit: PROCEED — stored {len(chunk_ids)} chunks to Knowledge Service",
+                    "component": "kb_write",
+                    "chunks_stored": len(chunk_ids),
+                }
+            )
             await self._tracing.trace_tool_call(
-                workflow_id=request.workflow_id, agent_name="validator-agent",
+                workflow_id=request.workflow_id,
+                agent_name="validator-agent",
                 tool_name="knowledge-service-ingestion",
                 input_params={"content_length": len(combined_text)},
                 output_summary={"chunks_stored": len(chunk_ids), "chunk_ids": chunk_ids[:5]},
@@ -325,8 +347,16 @@ class ValidatorService:
         """Reasoning steps for text file validation (Phase 5)."""
         return [
             {"step": offset + 1, "component": "mrc", "action": f"MRC: SKIPPED (text file, {word_count} words)"},
-            {"step": offset + 2, "component": "ocr", "action": f"OCR: SKIPPED (already text, read from {fi.file_name})"},
-            {"step": offset + 3, "component": "content_fit_decision", "action": f"Content-Fit: {raw.overall_status}. {fi.file_name} ({word_count} words)"},
+            {
+                "step": offset + 2,
+                "component": "ocr",
+                "action": f"OCR: SKIPPED (already text, read from {fi.file_name})",
+            },
+            {
+                "step": offset + 3,
+                "component": "content_fit_decision",
+                "action": f"Content-Fit: {raw.overall_status}. {fi.file_name} ({word_count} words)",
+            },
         ]
 
     @staticmethod
@@ -356,9 +386,12 @@ class ValidatorService:
             ts = _ts()
             cumulative_ms += mrc.inference_time_ms
             step: dict = {
-                "step": step_num, "component": "mrc", "model_id": "vertex-ai/mrc-production",
+                "step": step_num,
+                "component": "mrc",
+                "model_id": "vertex-ai/mrc-production",
                 "action": f"MRC: {mrc.readable_pages}/{mrc.total_pages} pages readable, blurry_ratio {mrc.blurry_ratio:.0%}{excluded}",
-                "status": mrc.overall_status, "latency_ms": mrc.inference_time_ms,
+                "status": mrc.overall_status,
+                "latency_ms": mrc.inference_time_ms,
                 "confidence": round(float(mrc.overall_confidence), 4),
             }
             if ts:
@@ -373,9 +406,12 @@ class ValidatorService:
             ts = _ts()
             cumulative_ms += ocr.ocr_time_ms
             ocr_step: dict = {
-                "step": step_num, "component": "ocr", "model_id": "google/document-ai",
+                "step": step_num,
+                "component": "ocr",
+                "model_id": "google/document-ai",
                 "action": f"OCR: {ocr.total_word_count} words from {ocr.total_pages} pages ({ocr.processing_mode or 'unknown'})",
-                "status": ocr.overall_status, "latency_ms": ocr.ocr_time_ms,
+                "status": ocr.overall_status,
+                "latency_ms": ocr.ocr_time_ms,
             }
             if ts:
                 ocr_step["timestamp"] = ts
@@ -386,28 +422,39 @@ class ValidatorService:
                 text_count = sum(1 for p in ocr.pages if p.classification == "TEXT")
                 visual_count = sum(1 for p in ocr.pages if p.classification == "VISUAL")
                 step_num += 1
-                steps.append({
-                    "step": step_num, "component": "page_classification", "model_id": "gpt-4.1-mini",
-                    "action": f"Classification: {text_count} TEXT, {visual_count} VISUAL",
-                })
+                steps.append(
+                    {
+                        "step": step_num,
+                        "component": "page_classification",
+                        "model_id": "gpt-4.1-mini",
+                        "action": f"Classification: {text_count} TEXT, {visual_count} VISUAL",
+                    }
+                )
 
             # Harmful image
             if ocr.harmful_image_detected:
                 step_num += 1
-                steps.append({
-                    "step": step_num, "component": "image_moderation",
-                    "action": f"Image moderation: FLAGGED page {ocr.harmful_image_page}. {ocr.harmful_image_detail or ''}",
-                    "status": "TERMINATE",
-                })
+                steps.append(
+                    {
+                        "step": step_num,
+                        "component": "image_moderation",
+                        "action": f"Image moderation: FLAGGED page {ocr.harmful_image_page}. {ocr.harmful_image_detail or ''}",
+                        "status": "TERMINATE",
+                    }
+                )
                 return steps
 
             # Visual understanding
             if ocr.visual_pages_processed and ocr.visual_pages_processed > 0:
                 step_num += 1
-                steps.append({
-                    "step": step_num, "component": "visual_understanding", "model_id": "gpt-4.1",
-                    "action": f"Visual understanding: {ocr.visual_pages_processed} pages enhanced",
-                })
+                steps.append(
+                    {
+                        "step": step_num,
+                        "component": "visual_understanding",
+                        "model_id": "gpt-4.1",
+                        "action": f"Visual understanding: {ocr.visual_pages_processed} pages enhanced",
+                    }
+                )
 
             if terminated_at == "ocr":
                 return steps
@@ -416,38 +463,60 @@ class ValidatorService:
         if safety is not None:
             # Text moderation pre-filter
             step_num += 1
-            if safety.overall_status == "TERMINATE" and safety.termination_reason == "HARMFUL_CONTENT" and not safety.harmful_findings:
-                steps.append({
-                    "step": step_num, "component": "text_moderation", "model_id": "openai/moderation-api",
-                    "action": f"Moderation pre-filter: FLAGGED ({safety.termination_detail or 'harmful'})",
-                    "status": "TERMINATE",
-                })
+            if (
+                safety.overall_status == "TERMINATE"
+                and safety.termination_reason == "HARMFUL_CONTENT"
+                and not safety.harmful_findings
+            ):
+                steps.append(
+                    {
+                        "step": step_num,
+                        "component": "text_moderation",
+                        "model_id": "openai/moderation-api",
+                        "action": f"Moderation pre-filter: FLAGGED ({safety.termination_detail or 'harmful'})",
+                        "status": "TERMINATE",
+                    }
+                )
                 return steps
 
-            steps.append({
-                "step": step_num, "component": "text_moderation", "model_id": "openai/moderation-api",
-                "action": "Moderation pre-filter: PASSED (free)", "status": "PASSED",
-            })
+            steps.append(
+                {
+                    "step": step_num,
+                    "component": "text_moderation",
+                    "model_id": "openai/moderation-api",
+                    "action": "Moderation pre-filter: PASSED (free)",
+                    "status": "PASSED",
+                }
+            )
 
             # Analyzers
             findings = {
-                "A": len(safety.harmful_findings), "B": len(safety.misinformation_findings),
+                "A": len(safety.harmful_findings),
+                "B": len(safety.misinformation_findings),
                 "C": len(safety.pii_findings) + len(safety.copyright_findings),
                 "D": len(safety.religious_political_findings),
             }
             step_num += 1
-            steps.append({
-                "step": step_num, "component": "content_analyzers", "model_id": "gpt-4.1",
-                "action": f"4 analyzers: A({findings['A']} harmful) B({findings['B']} misinfo) C({findings['C']} PII/copyright) D({findings['D']} political)",
-                "findings_total": sum(findings.values()),
-            })
+            steps.append(
+                {
+                    "step": step_num,
+                    "component": "content_analyzers",
+                    "model_id": "gpt-4.1",
+                    "action": f"4 analyzers: A({findings['A']} harmful) B({findings['B']} misinfo) C({findings['C']} PII/copyright) D({findings['D']} political)",
+                    "findings_total": sum(findings.values()),
+                }
+            )
 
             # Synthesizer
             step_num += 1
-            steps.append({
-                "step": step_num, "component": "synthesizer", "model_id": "gpt-4.1",
-                "action": f"Synthesizer: {sum(findings.values())} finding(s) confirmed",
-            })
+            steps.append(
+                {
+                    "step": step_num,
+                    "component": "synthesizer",
+                    "model_id": "gpt-4.1",
+                    "action": f"Synthesizer: {sum(findings.values())} finding(s) confirmed",
+                }
+            )
 
             # Content fit decision
             step_num += 1
@@ -458,19 +527,26 @@ class ValidatorService:
                 hard_gates.append("religious/political")
 
             if hard_gates:
-                steps.append({
-                    "step": step_num, "component": "content_fit_decision",
-                    "action": f"Content-Fit: TERMINATE. Hard gate(s): {', '.join(hard_gates)}",
-                    "status": "TERMINATE",
-                })
+                steps.append(
+                    {
+                        "step": step_num,
+                        "component": "content_fit_decision",
+                        "action": f"Content-Fit: TERMINATE. Hard gate(s): {', '.join(hard_gates)}",
+                        "status": "TERMINATE",
+                    }
+                )
                 return steps
 
             if safety.overall_status == "TERMINATE":
                 reason = safety.termination_reason or safety.error_message or "unavailable"
-                steps.append({
-                    "step": step_num, "component": "content_fit_decision",
-                    "action": f"Content-Fit: TERMINATE. {reason}", "status": "TERMINATE",
-                })
+                steps.append(
+                    {
+                        "step": step_num,
+                        "component": "content_fit_decision",
+                        "action": f"Content-Fit: TERMINATE. {reason}",
+                        "status": "TERMINATE",
+                    }
+                )
                 return steps
 
             soft_items = []
@@ -482,20 +558,26 @@ class ValidatorService:
                 soft_items.append(f"{len(safety.misinformation_findings)} misinformation warned")
 
             soft_desc = ". ".join(soft_items) if soft_items else "No issues"
-            steps.append({
-                "step": step_num, "component": "content_fit_decision",
-                "action": f"Content-Fit: {safety.overall_status}. {soft_desc}",
-                "status": safety.overall_status,
-            })
+            steps.append(
+                {
+                    "step": step_num,
+                    "component": "content_fit_decision",
+                    "action": f"Content-Fit: {safety.overall_status}. {soft_desc}",
+                    "status": safety.overall_status,
+                }
+            )
 
         # KB write
         cleaned_len = len(getattr(result, "cleaned_text", "") or "")
         if cleaned_len > 0 and getattr(result, "overall_status", "") != "TERMINATE":
             step_num += 1
-            steps.append({
-                "step": step_num, "component": "knowledge_service",
-                "action": f"Forwarded {cleaned_len} chars (PII-redacted) to Knowledge Service",
-            })
+            steps.append(
+                {
+                    "step": step_num,
+                    "component": "knowledge_service",
+                    "action": f"Forwarded {cleaned_len} chars (PII-redacted) to Knowledge Service",
+                }
+            )
 
         return steps
 
@@ -527,9 +609,14 @@ class ValidatorService:
     # ─── Audit Decision (Dual-Sink) ───────────────────────────────
 
     async def _log_audit_decision(
-        self, *, request: ValidationRequest, overall_signal: TerminalSignal,
-        file_results: list[FileResult], reasoning_steps: list[dict],
-        grounding_chunk_ids: list[str] | None = None, content_fitness: float = 0.0,
+        self,
+        *,
+        request: ValidationRequest,
+        overall_signal: TerminalSignal,
+        file_results: list[FileResult],
+        reasoning_steps: list[dict],
+        grounding_chunk_ids: list[str] | None = None,
+        content_fitness: float = 0.0,
     ) -> None:
         """Log decision to Decision Audit Service (Pub/Sub) + Langfuse."""
         composite_model_id = self._build_composite_model_id()
@@ -542,13 +629,25 @@ class ValidatorService:
             input={
                 "file_count": len(request.files),
                 "files": [f.file_name for f in request.files],
-                "phase": "Phase 3: Material Validation" if request.validation_type != "web_research_validation" else "Phase 5: Web Research Validation",
-                "tools_used": ["mrc-vertex-ai", "documentai-ocr", "page-classifier", "visual-understanding", "moderation-api", "content-analyzers-x4", "content-synthesizer"],
+                "phase": "Phase 3: Material Validation"
+                if request.validation_type != "web_research_validation"
+                else "Phase 5: Web Research Validation",
+                "tools_used": [
+                    "mrc-vertex-ai",
+                    "documentai-ocr",
+                    "page-classifier",
+                    "visual-understanding",
+                    "moderation-api",
+                    "content-analyzers-x4",
+                    "content-synthesizer",
+                ],
             },
             output={
                 "terminal_signal": overall_signal.model_dump(),
                 "files_validated": len(file_results),
-                "files_passed": sum(1 for f in file_results if f.terminal_signal.status != TerminalSignalStatus.TERMINATE),
+                "files_passed": sum(
+                    1 for f in file_results if f.terminal_signal.status != TerminalSignalStatus.TERMINATE
+                ),
                 "assessor_warnings_count": sum(len(f.assessor_warnings) for f in file_results),
                 "content_fitness": content_fitness,
             },
@@ -574,6 +673,7 @@ class ValidatorService:
     def _build_composite_model_id() -> str:
         """Build composite model_id from actual models used."""
         from validator_agent.pipeline.llm_client import get_stats
+
         llm_model = get_stats().last_model_used
         return f"vertex-ai-mrc + document-ai-ocr + {llm_model}"
 

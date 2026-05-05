@@ -3,6 +3,7 @@
 Every validation decision is logged to the immutable audit trail
 (Invariant #5) via the Decision Audit Service (L-11, gRPC fire-and-forget).
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

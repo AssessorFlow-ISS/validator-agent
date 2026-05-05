@@ -4,6 +4,7 @@ Inlined from af_shared.guardrails.pii.
 5 patterns covering Singapore NRIC, credit card, phone, email, and SSN.
 Regex-only implementation (no Presidio dependency) for lightweight usage.
 """
+
 from __future__ import annotations
 
 import re

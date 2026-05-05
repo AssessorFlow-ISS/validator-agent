@@ -8,6 +8,7 @@ Config-driven: GUARDRAILS_ENABLED, GUARDRAILS_BLOCK_ON_INJECTION, etc.
 This is the Validator Agent's local implementation of Model Broker's L-10
 Guardrails Service — same patterns, same security posture, no proxy dependency.
 """
+
 from __future__ import annotations
 
 import time
@@ -65,7 +66,9 @@ class GuardrailScanner:
 
         if not self._enabled:
             return GuardrailResult(
-                passed=True, violations=[], scan_type="input",
+                passed=True,
+                violations=[],
+                scan_type="input",
                 latency_ms=(time.monotonic() - start) * 1000,
             )
 
@@ -130,7 +133,9 @@ class GuardrailScanner:
 
         if not self._enabled:
             return GuardrailResult(
-                passed=True, violations=[], scan_type="output",
+                passed=True,
+                violations=[],
+                scan_type="output",
                 latency_ms=(time.monotonic() - start) * 1000,
             )
 

@@ -4,6 +4,7 @@ Mirrors :class:`GrpcMaterialValidationAdapter` without any network calls.
 Pre-seed ``materials`` via the constructor; validation writes are
 recorded in ``updates`` for test assertions.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -1,4 +1,5 @@
 """Tests for stub adapter behavior."""
+
 from __future__ import annotations
 
 from pathlib import Path

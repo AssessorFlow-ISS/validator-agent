@@ -8,6 +8,7 @@ Usage:
     scanner = GuardrailScanner(enabled=True, block_on_injection=True)
     result = scanner.scan_input(prompt_text)
 """
+
 from validator_agent.guardrails.scanner import GuardrailScanner
 
 __all__ = ["GuardrailScanner"]

@@ -5,6 +5,7 @@ A canary token is a random marker injected into the system prompt.
 If the LLM leaks the system prompt in its output, the canary token
 will be present and detectable — indicating a system prompt leak (OWASP LLM07).
 """
+
 from __future__ import annotations
 
 import secrets

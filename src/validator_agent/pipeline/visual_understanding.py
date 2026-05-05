@@ -28,7 +28,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from validator_agent.pipeline.llm_client import generate_multimodal, LlmResponse
+from validator_agent.pipeline.llm_client import generate_multimodal
 from validator_agent.pipeline.model_registry import get_moderation_client
 from validator_agent.pipeline.prompt_loader import load_prompt
 
@@ -52,6 +52,7 @@ EVALUATOR_SYSTEM_PROMPT = _EVALUATOR_PROMPT
 
 # ── Pydantic models for structured evaluator output ────
 
+
 class Verdict(str, Enum):
     PASS = "PASS"
     FAIL = "FAIL"
@@ -68,8 +69,7 @@ class EvaluationResult(BaseModel):
         description="Three dimensions: accuracy, completeness, educational_value"
     )
     retry_prompt_supplement: str | None = Field(
-        default=None,
-        description="Concise fix instructions for the generator if FAIL"
+        default=None, description="Concise fix instructions for the generator if FAIL"
     )
 
 
@@ -159,9 +159,7 @@ def check_image_moderation(page_image_bytes: bytes) -> ImageModerationResult:
         )
 
         result = response.results[0]
-        flagged_categories = [
-            cat for cat, flagged in result.categories.model_dump().items() if flagged
-        ]
+        flagged_categories = [cat for cat, flagged in result.categories.model_dump().items() if flagged]
 
         return ImageModerationResult(
             flagged=result.flagged,
@@ -248,6 +246,7 @@ def evaluate_description(
     # Use the shared cleaner so $ref / $defs / anyOf-null / etc. are resolved
     # recursively. Pre-popping just $defs at top level orphans nested $ref.
     from validator_agent.pipeline.schema_compat import clean_for_gemini
+
     eval_schema = clean_for_gemini(EvaluationResult.model_json_schema())
 
     messages = [
@@ -319,7 +318,9 @@ def process_visual_page(
     # Initial generation
     try:
         generated = generate_visual_description(
-            page_image_bytes, ocr_text, workflow_id=workflow_id,
+            page_image_bytes,
+            ocr_text,
+            workflow_id=workflow_id,
         )
     except Exception as e:
         return VisualProcessResult(
@@ -333,7 +334,9 @@ def process_visual_page(
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             evaluation = evaluate_description(
-                page_image_bytes, generated, workflow_id=workflow_id,
+                page_image_bytes,
+                generated,
+                workflow_id=workflow_id,
             )
         except Exception as e:
             evaluations.append({"attempt": attempt, "error": str(e)})
@@ -357,7 +360,8 @@ def process_visual_page(
         feedback = _format_evaluation_feedback(evaluation)
         try:
             generated = generate_visual_description(
-                page_image_bytes, ocr_text,
+                page_image_bytes,
+                ocr_text,
                 previous_output=generated,
                 retry_feedback=feedback,
                 workflow_id=workflow_id,
@@ -453,21 +457,20 @@ def process_visual_batch(
             return results
 
     # Phase 2: Single Model Broker call for all pages in batch
-    ocr_context = "\n\n".join(
-        f"--- Page {pn} OCR ---\n{ocr[:3000]}"
-        for pn, _, ocr in batch_items
-    )
+    ocr_context = "\n\n".join(f"--- Page {pn} OCR ---\n{ocr[:3000]}" for pn, _, ocr in batch_items)
     system_prompt = _BATCH_GENERATOR_PREAMBLE + GENERATOR_SYSTEM_PROMPT.format(ocr_text=ocr_context)
 
     user_content: list[dict] = [{"type": "text", "text": "Analyze these pages:"}]
     for pn, img_bytes, _ in batch_items:
-        user_content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
-                "detail": "high",
-            },
-        })
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
+                    "detail": "high",
+                },
+            }
+        )
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -546,23 +549,22 @@ def evaluate_visual_batch(
         return {}
 
     # Build evaluation prompt with all descriptions
-    desc_text = "\n\n".join(
-        f"## Page {pn}\n{descriptions[pn]}"
-        for pn in page_numbers
-    )
+    desc_text = "\n\n".join(f"## Page {pn}\n{descriptions[pn]}" for pn in page_numbers)
 
     user_content: list[dict] = [
         {"type": "text", "text": f"Descriptions to evaluate:\n\n{desc_text}"},
     ]
     for pn, img_bytes, _ in batch_items:
         if pn in descriptions:
-            user_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
-                    "detail": "high",
-                },
-            })
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
+                        "detail": "high",
+                    },
+                }
+            )
 
     eval_system = (
         _BATCH_EVALUATOR_PREAMBLE + EVALUATOR_SYSTEM_PROMPT + "\n\n"

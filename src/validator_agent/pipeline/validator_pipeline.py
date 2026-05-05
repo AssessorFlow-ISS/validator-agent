@@ -87,11 +87,13 @@ def validate_file(file_bytes: bytes, file_name: str) -> ValidatorResult:
     # MRC exclusions
     if mrc_result.excluded_pages:
         for page_num in mrc_result.excluded_pages:
-            assessor_warnings.append({
-                "page": page_num,
-                "type": "page_excluded",
-                "detail": "Page excluded — blurry/unreadable (detected by MRC)",
-            })
+            assessor_warnings.append(
+                {
+                    "page": page_num,
+                    "type": "page_excluded",
+                    "detail": "Page excluded — blurry/unreadable (detected by MRC)",
+                }
+            )
 
     # Content Safety warnings
     assessor_warnings.extend(safety_result.assessor_warnings)

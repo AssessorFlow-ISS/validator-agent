@@ -3,6 +3,7 @@
 The Validator Agent downloads files from Cloud Storage before running
 MRC and OCR checks.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

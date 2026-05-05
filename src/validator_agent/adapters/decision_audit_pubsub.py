@@ -15,7 +15,7 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -31,14 +31,13 @@ class PubSubDecisionAuditAdapter(DecisionAuditPort):
     """Publishes audit decisions to Pub/Sub for the Decision Audit Service."""
 
     def __init__(self, project_id: str | None = None) -> None:
-        self._project_id = project_id or os.environ.get(
-            "PUBSUB_PROJECT_ID", "accessorflow"
-        )
+        self._project_id = project_id or os.environ.get("PUBSUB_PROJECT_ID", "accessorflow")
         self._publisher = None
 
     def _ensure_publisher(self):
         if self._publisher is None:
             from google.cloud import pubsub_v1
+
             self._publisher = pubsub_v1.PublisherClient()
         return self._publisher
 
@@ -59,7 +58,7 @@ class PubSubDecisionAuditAdapter(DecisionAuditPort):
                 "event_id": str(uuid.uuid4()),
                 "event_type": "audit.decision",
                 "workflow_id": workflow_id,
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
                 "source_agent": agent_name,
                 "correlation_id": workflow_id,
                 "payload": {

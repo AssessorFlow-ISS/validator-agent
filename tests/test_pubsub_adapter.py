@@ -6,6 +6,7 @@ and error handling without a real Pub/Sub emulator.
 After the refactor to inherit from AgentPubSubSubscriber, the __new__
 pattern must also set _agent_name (set by the base __init__).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -112,6 +113,7 @@ class TestPubSubSubscribe:
 
         # First pull returns message, second raises to stop loop
         call_count = 0
+
         def pull_side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -157,6 +159,7 @@ class TestPubSubSubscribe:
         pull_response.received_messages = [msg]
 
         call_count = 0
+
         def pull_side_effect(*args, **kwargs):
             nonlocal call_count
             call_count += 1

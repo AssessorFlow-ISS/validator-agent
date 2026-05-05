@@ -47,10 +47,7 @@ def _resolve_refs(schema: dict) -> dict:
             if isinstance(value, dict):
                 result[key] = _resolve(value)
             elif isinstance(value, list):
-                result[key] = [
-                    _resolve(item) if isinstance(item, dict) else item
-                    for item in value
-                ]
+                result[key] = [_resolve(item) if isinstance(item, dict) else item for item in value]
             else:
                 result[key] = value
         return result
@@ -68,17 +65,10 @@ def _strip_unsupported_keys(schema: dict) -> dict:
             elif isinstance(node[key], dict):
                 node[key] = _clean(node[key])
             elif isinstance(node[key], list):
-                node[key] = [
-                    _clean(item) if isinstance(item, dict) else item
-                    for item in node[key]
-                ]
+                node[key] = [_clean(item) if isinstance(item, dict) else item for item in node[key]]
 
         if "anyOf" in node and isinstance(node["anyOf"], list):
-            non_null = [
-                t
-                for t in node["anyOf"]
-                if not (isinstance(t, dict) and t.get("type") == "null")
-            ]
+            non_null = [t for t in node["anyOf"] if not (isinstance(t, dict) and t.get("type") == "null")]
             if len(non_null) == 1:
                 node.pop("anyOf")
                 node.update(non_null[0])

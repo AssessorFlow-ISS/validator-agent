@@ -2,6 +2,7 @@
 
 ``convert_from_bytes`` is patched so tests do not require Poppler.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch

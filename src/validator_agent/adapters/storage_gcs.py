@@ -70,10 +70,7 @@ class GcsStorageAdapter(StoragePort):
         if storage_path.startswith("gs://"):
             match = _GCS_URI_PATTERN.match(storage_path)
             if not match:
-                raise ValueError(
-                    f"Invalid GCS URI: '{storage_path}'. "
-                    "Expected format: gs://bucket-name/path/to/blob"
-                )
+                raise ValueError(f"Invalid GCS URI: '{storage_path}'. Expected format: gs://bucket-name/path/to/blob")
             return match.group(1), match.group(2)
 
         if self._default_bucket is None:
@@ -120,9 +117,7 @@ class GcsStorageAdapter(StoragePort):
                         bucket=bucket_name,
                         blob=blob_path,
                     )
-                    raise FileNotFoundError(
-                        f"Blob not found: gs://{bucket_name}/{blob_path}"
-                    ) from e
+                    raise FileNotFoundError(f"Blob not found: gs://{bucket_name}/{blob_path}") from e
                 raise
 
         try:

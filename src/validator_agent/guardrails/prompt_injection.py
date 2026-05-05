@@ -6,6 +6,7 @@ plus CANARY_PROBE and DATA_ENUMERATION.
 All patterns are compiled at module load time for performance.
 Zero LLM token cost — pure regex matching.
 """
+
 from __future__ import annotations
 
 import re

@@ -3,6 +3,7 @@
 These models define the contract for POST /invoke and are used by both
 the routes and the domain service layer.
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

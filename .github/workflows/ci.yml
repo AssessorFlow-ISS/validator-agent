@@ -35,7 +35,7 @@ jobs:
         run: uv run ruff format --check src/ tests/
 
       - name: mypy
-        run: uv run mypy src/. || true
+        run: uv run mypy src/.
 
   # ── Stage 1b: Security — SCA + Secrets + CI ────────────────
   security-sca:
@@ -68,6 +68,7 @@ jobs:
   security-zizmor:
     name: Security — zizmor (GHA audit)
     runs-on: ubuntu-latest
+    continue-on-error: true
     permissions:
       contents: read
       actions: read

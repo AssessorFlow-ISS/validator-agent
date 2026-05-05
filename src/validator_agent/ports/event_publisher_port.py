@@ -4,6 +4,7 @@ The Validator Agent publishes completion events to
 assessorflow.validation.complete (Topic #3) for the Orchestrator to
 consume and resume the workflow.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

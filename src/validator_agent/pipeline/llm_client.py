@@ -39,14 +39,13 @@ import os
 import time
 from dataclasses import dataclass
 
-from validator_agent.pipeline.schema_compat import clean_for_gemini
-
 from validator_agent.pipeline.model_registry import (
     estimate_cost,
     get_client,
     get_model_id,
     get_tier,
 )
+from validator_agent.pipeline.schema_compat import clean_for_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +67,7 @@ def _get_scanner():
         return None
 
     from validator_agent.guardrails import GuardrailScanner
+
     _guardrail_scanner = GuardrailScanner(
         enabled=True,
         block_on_pii=os.getenv("GUARDRAILS_BLOCK_ON_PII", "false").lower() in ("true", "1"),
@@ -98,12 +98,11 @@ def set_workflow_context(workflow_id: str) -> None:
 
 
 # Keep ContextVar for backward compat but also set module var
-_workflow_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "workflow_id", default="unknown"
-)
+_workflow_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("workflow_id", default="unknown")
 
 
 # ─── Response & Stats ─────────────────────────────────────────
+
 
 @dataclass
 class LlmResponse:
@@ -155,6 +154,7 @@ def _get_langfuse():
 
     try:
         from langfuse import Langfuse
+
         _langfuse_client = Langfuse()
         logger.info("langfuse_initialized_in_llm_client")
     except ImportError:
@@ -322,6 +322,7 @@ def _trace_llm_call(
 
 # ─── generate() — text prompts ───────────────────────────────
 
+
 def generate(
     *,
     task_key: str,
@@ -349,8 +350,11 @@ def generate(
         input_result = scanner.scan_input(prompt)
         _trace_guardrail("input", component, input_result)
         if not input_result.passed:
-            logger.warning("guardrail_input_blocked component=%s violations=%s",
-                           component, [v.pattern_name for v in input_result.violations])
+            logger.warning(
+                "guardrail_input_blocked component=%s violations=%s",
+                component,
+                [v.pattern_name for v in input_result.violations],
+            )
             return LlmResponse(content="{}", model_used=model_id)
 
         if system_prompt:
@@ -373,20 +377,38 @@ def generate(
         output_result = scanner.scan_output(resp.content, canary=canary)
         _trace_guardrail("output", component, output_result)
         if not output_result.passed:
-            logger.warning("guardrail_output_blocked component=%s violations=%s",
-                           component, [v.pattern_name for v in output_result.violations])
-            return LlmResponse(content="{}", model_used=resp.model_used,
-                               tokens_input=resp.tokens_input, tokens_output=resp.tokens_output,
-                               cost_usd=cost, latency_ms=resp.latency_ms)
+            logger.warning(
+                "guardrail_output_blocked component=%s violations=%s",
+                component,
+                [v.pattern_name for v in output_result.violations],
+            )
+            return LlmResponse(
+                content="{}",
+                model_used=resp.model_used,
+                tokens_input=resp.tokens_input,
+                tokens_output=resp.tokens_output,
+                cost_usd=cost,
+                latency_ms=resp.latency_ms,
+            )
 
     _update_stats(resp)
     _log_call(component, resp)
-    _trace_llm_call(component, resp.model_used, str(tier), resp.tokens_input, resp.tokens_output, cost, resp.latency_ms, prompt_version)
+    _trace_llm_call(
+        component,
+        resp.model_used,
+        str(tier),
+        resp.tokens_input,
+        resp.tokens_output,
+        cost,
+        resp.latency_ms,
+        prompt_version,
+    )
 
     return resp
 
 
 # ─── generate_multimodal() — messages with images ────────────
+
 
 def generate_multimodal(
     *,
@@ -415,8 +437,11 @@ def generate_multimodal(
             input_result = scanner.scan_input(text_parts)
             _trace_guardrail("input", component, input_result)
             if not input_result.passed:
-                logger.warning("guardrail_input_blocked", component=component,
-                               violations=[v.pattern_name for v in input_result.violations])
+                logger.warning(
+                    "guardrail_input_blocked",
+                    component=component,
+                    violations=[v.pattern_name for v in input_result.violations],
+                )
                 return LlmResponse(content="{}", model_used=model_id)
 
         # Inject canary into system message if present
@@ -436,20 +461,39 @@ def generate_multimodal(
         output_result = scanner.scan_output(resp.content, canary=canary)
         _trace_guardrail("output", component, output_result)
         if not output_result.passed:
-            logger.warning("guardrail_output_blocked component=%s violations=%s",
-                           component, [v.pattern_name for v in output_result.violations])
-            return LlmResponse(content="{}", model_used=resp.model_used,
-                               tokens_input=resp.tokens_input, tokens_output=resp.tokens_output,
-                               cost_usd=cost, latency_ms=resp.latency_ms)
+            logger.warning(
+                "guardrail_output_blocked component=%s violations=%s",
+                component,
+                [v.pattern_name for v in output_result.violations],
+            )
+            return LlmResponse(
+                content="{}",
+                model_used=resp.model_used,
+                tokens_input=resp.tokens_input,
+                tokens_output=resp.tokens_output,
+                cost_usd=cost,
+                latency_ms=resp.latency_ms,
+            )
 
     _update_stats(resp)
     _log_call(component, resp, multimodal=True)
-    _trace_llm_call(component, resp.model_used, str(tier), resp.tokens_input, resp.tokens_output, cost, resp.latency_ms, prompt_version, is_multimodal=True)
+    _trace_llm_call(
+        component,
+        resp.model_used,
+        str(tier),
+        resp.tokens_input,
+        resp.tokens_output,
+        cost,
+        resp.latency_ms,
+        prompt_version,
+        is_multimodal=True,
+    )
 
     return resp
 
 
 # ─── generate_structured() — Pydantic output ─────────────────
+
 
 def generate_structured(
     *,
@@ -483,6 +527,7 @@ def generate_structured(
 
 
 # ─── Tool tracing (non-LLM tools: MRC, OCR, Moderation) ──────
+
 
 def trace_tool(
     tool_name: str,
@@ -527,6 +572,7 @@ def trace_tool(
 
 # ─── Guardrail helpers ────────────────────────────────────────
 
+
 def _trace_guardrail(direction: str, component: str, result) -> None:
     """Log guardrail scan result to structlog + Langfuse. Fire-and-forget.
 
@@ -541,7 +587,11 @@ def _trace_guardrail(direction: str, component: str, result) -> None:
 
     logger.warning(
         "guardrail_%s_%s component=%s violations=%s latency_ms=%.2f",
-        direction, action.lower(), component, violation_names, result.latency_ms,
+        direction,
+        action.lower(),
+        component,
+        violation_names,
+        result.latency_ms,
     )
 
     trace_tool(
@@ -572,9 +622,14 @@ def _extract_text_from_messages(messages: list[dict]) -> str:
 
 # ─── Internal helpers ─────────────────────────────────────────
 
+
 def _call_openai(
-    client, model_id: str, messages: list[dict],
-    max_tokens: int, temperature: float, response_format: str | None,
+    client,
+    model_id: str,
+    messages: list[dict],
+    max_tokens: int,
+    temperature: float,
+    response_format: str | None,
 ) -> LlmResponse:
     """Execute the OpenAI SDK call and return unified LlmResponse."""
     kwargs: dict = {

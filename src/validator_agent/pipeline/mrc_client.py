@@ -51,7 +51,9 @@ def _get_gcp_token() -> str:
         try:
             result = subprocess.run(
                 ["gcloud", "auth", "print-access-token"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return result.stdout.strip()
         except Exception:
@@ -63,8 +65,7 @@ def _call_vertex_ai(file_bytes: bytes, file_name: str) -> dict:
     token = _get_gcp_token()
     if not token:
         raise ConnectionError(
-            "Failed to get GCP access token — "
-            "run 'gcloud auth login' (dev) or check Workload Identity (prod)"
+            "Failed to get GCP access token — run 'gcloud auth login' (dev) or check Workload Identity (prod)"
         )
 
     response = requests.post(
@@ -180,6 +181,7 @@ def check_readability(file_bytes: bytes, file_name: str) -> MrcResult:
 
     # Langfuse trace (fire-and-forget)
     from validator_agent.pipeline.llm_client import trace_tool
+
     trace_tool(
         tool_name="mrc-vertex-ai",
         input_params={"file_name": file_name},

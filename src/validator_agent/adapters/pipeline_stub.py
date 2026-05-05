@@ -5,6 +5,7 @@ results. Returns ValidatorResult for integration with the ValidatorService bridg
 
 No external calls — safe for unit tests and CI.
 """
+
 from __future__ import annotations
 
 import re
@@ -45,14 +46,17 @@ def make_stub_pipeline(
         ocr_text: Override OCR output text. None = use file content or default.
         min_ocr_length: Minimum text length for OCR pass.
     """
+
     def _fn(file_bytes: bytes, file_name: str) -> ValidatorResult:
         return _stub_pipeline_impl(
-            file_bytes, file_name,
+            file_bytes,
+            file_name,
             mrc_readiness=mrc_readiness,
             mrc_confidence=mrc_confidence,
             ocr_text_override=ocr_text,
             min_ocr_length=min_ocr_length,
         )
+
     return _fn
 
 
@@ -118,24 +122,29 @@ def _stub_pipeline_impl(
             terminated_at_component="ocr",
             mrc=mrc,
             ocr=OcrResult(
-                file_name=file_name, total_pages=1,
+                file_name=file_name,
+                total_pages=1,
                 pages=[PageOcrResult(page_number=1, extracted_text=ocr_text, word_count=len(ocr_text.split()))],
-                total_word_count=len(ocr_text.split()), ocr_time_ms=100.0,
-                overall_status="TERMINATE", success=False,
+                total_word_count=len(ocr_text.split()),
+                ocr_time_ms=100.0,
+                overall_status="TERMINATE",
+                success=False,
             ),
             total_time_ms=150.0,
         )
     ocr = OcrResult(
         file_name=file_name,
         total_pages=1,
-        pages=[PageOcrResult(
-            page_number=1,
-            extracted_text=ocr_text,
-            word_count=len(ocr_text.split()),
-            confidence=0.98,
-            classification="TEXT",
-            source="ocr",
-        )],
+        pages=[
+            PageOcrResult(
+                page_number=1,
+                extracted_text=ocr_text,
+                word_count=len(ocr_text.split()),
+                confidence=0.98,
+                classification="TEXT",
+                source="ocr",
+            )
+        ],
         total_word_count=len(ocr_text.split()),
         ocr_time_ms=100.0,
         overall_status="PROCEED",
@@ -152,7 +161,8 @@ def _stub_pipeline_impl(
                 termination_reason="HARMFUL_CONTENT",
                 termination_detail=f"Harmful content detected: contains '{keyword}' reference",
                 terminated_at_component="content_safety",
-                mrc=mrc, ocr=ocr,
+                mrc=mrc,
+                ocr=ocr,
                 content_safety=ContentSafetyResult(
                     overall_status="TERMINATE",
                     termination_reason="HARMFUL_CONTENT",
@@ -169,7 +179,8 @@ def _stub_pipeline_impl(
                 termination_reason="PII_DETECTED",
                 termination_detail="Personally identifiable information detected",
                 terminated_at_component="content_safety",
-                mrc=mrc, ocr=ocr,
+                mrc=mrc,
+                ocr=ocr,
                 content_safety=ContentSafetyResult(
                     overall_status="TERMINATE",
                     termination_reason="PII_DETECTED",
@@ -186,7 +197,8 @@ def _stub_pipeline_impl(
                 termination_reason="COPYRIGHT_VIOLATION",
                 termination_detail=f"Copyright violation detected: contains '{keyword}'",
                 terminated_at_component="content_safety",
-                mrc=mrc, ocr=ocr,
+                mrc=mrc,
+                ocr=ocr,
                 content_safety=ContentSafetyResult(
                     overall_status="TERMINATE",
                     termination_reason="COPYRIGHT_VIOLATION",
@@ -198,7 +210,8 @@ def _stub_pipeline_impl(
     return ValidatorResult(
         file_name=file_name,
         overall_status="PROCEED",
-        mrc=mrc, ocr=ocr,
+        mrc=mrc,
+        ocr=ocr,
         content_safety=ContentSafetyResult(
             overall_status="PROCEED",
             cleaned_text=ocr_text,

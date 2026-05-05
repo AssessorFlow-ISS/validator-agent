@@ -4,9 +4,10 @@ page_classifier, content_analyzers, content_synthesizer, content_safety.
 Each module is a thin layer over LLM calls; we mock the httpx / generate_structured
 boundary and verify branching, parsing, and error-fallback paths.
 """
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from validator_agent.pipeline import (
     content_analyzers,
@@ -48,19 +49,13 @@ class TestPageClassifier:
         assert page_classifier.classify_page("   \n  ") == "VISUAL"
 
     def test_structured_llm_success_returns_value(self) -> None:
-        cls = page_classifier.ClassificationResult(
-            classification=page_classifier.PageType.TEXT
-        )
-        with patch.object(
-            page_classifier, "generate_structured", return_value=(cls, LlmResponse(content=""))
-        ):
+        cls = page_classifier.ClassificationResult(classification=page_classifier.PageType.TEXT)
+        with patch.object(page_classifier, "generate_structured", return_value=(cls, LlmResponse(content=""))):
             assert page_classifier.classify_page("some coherent prose") == "TEXT"
 
     def test_llm_error_falls_back_to_heuristic(self) -> None:
         long_prose = "The quick brown fox jumps over the lazy dog. " * 10
-        with patch.object(
-            page_classifier, "generate_structured", side_effect=RuntimeError("llm down")
-        ):
+        with patch.object(page_classifier, "generate_structured", side_effect=RuntimeError("llm down")):
             # Heuristic: long coherent sentences → TEXT
             assert page_classifier.classify_page(long_prose) == "TEXT"
 
@@ -117,9 +112,7 @@ class TestContentAnalyzers:
             "generate_structured",
             return_value=(parsed, LlmResponse(content="")),
         ):
-            result = content_analyzers._run_analyzer(
-                "system", "pages", "analyzer_a"
-            )
+            result = content_analyzers._run_analyzer("system", "pages", "analyzer_a")
 
         assert result.error is None
         assert len(result.findings) == 1
@@ -131,9 +124,7 @@ class TestContentAnalyzers:
             "generate_structured",
             side_effect=RuntimeError("llm fail"),
         ):
-            result = content_analyzers._run_analyzer(
-                "system", "pages", "analyzer_b"
-            )
+            result = content_analyzers._run_analyzer("system", "pages", "analyzer_b")
         assert result.error is not None
         assert "analyzer_b" in result.error
 
@@ -141,9 +132,7 @@ class TestContentAnalyzers:
         def _mock(sys_prompt: str, pages_text: str, name: str):
             if name == "analyzer_b":
                 return AnalyzerResult(error=f"{name}: failed")
-            return AnalyzerResult(
-                findings=[{"page": 1, "type": "x", "detail": "ok", "source": name}]
-            )
+            return AnalyzerResult(findings=[{"page": 1, "type": "x", "detail": "ok", "source": name}])
 
         with patch.object(content_analyzers, "_run_analyzer", side_effect=_mock):
             out = content_analyzers.run_all_analyzers([_mk_page()])
@@ -220,9 +209,7 @@ class TestPipelineContentSafety:
         return moderation_prefilter.ModerationCheckResult(flagged=False)
 
     def _mod_flagged(self):
-        return moderation_prefilter.ModerationCheckResult(
-            flagged=True, categories=["violence"]
-        )
+        return moderation_prefilter.ModerationCheckResult(flagged=True, categories=["violence"])
 
     def _empty_analyzers(self) -> AllAnalyzerResults:
         return AllAnalyzerResults()
@@ -294,13 +281,15 @@ class TestPipelineContentSafety:
             word_count=5,
         )
         synth = content_synthesizer.SynthesisResult(
-            findings=[{
-                "page": 1,
-                "type": "name",
-                "detail": "name",
-                "original": "John",
-                "redacted_to": "[NAME]",
-            }]
+            findings=[
+                {
+                    "page": 1,
+                    "type": "name",
+                    "detail": "name",
+                    "original": "John",
+                    "redacted_to": "[NAME]",
+                }
+            ]
         )
         with (
             patch.object(cs_mod, "check_moderation", return_value=self._mod_ok()),
@@ -356,6 +345,7 @@ class TestPipelineContentSafety:
         p1 = PageOcrResult(page_number=1, extracted_text="Alice called Bob", word_count=3)
         p2 = PageOcrResult(page_number=2, extracted_text="Carol met Dave", word_count=3)
         from validator_agent.pipeline.models import Finding
+
         pii = [
             Finding(page=1, type="name", detail="x", original="Alice", redacted_to="[NAME1]"),
             Finding(page=2, type="name", detail="x", original="Dave", redacted_to="[NAME2]"),

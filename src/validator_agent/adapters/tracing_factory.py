@@ -20,8 +20,10 @@ def get_tracing() -> TracingPort:
     adapter = os.getenv("TRACING_ADAPTER", "stub")
     if adapter == "stub":
         from validator_agent.adapters.tracing_stub import StubTracingAdapter
+
         return StubTracingAdapter()
     if adapter == "langfuse":
         from validator_agent.adapters.tracing_langfuse import LangfuseTracingAdapter
+
         return LangfuseTracingAdapter()
     raise ValueError(f"Unknown TRACING_ADAPTER: {adapter}")

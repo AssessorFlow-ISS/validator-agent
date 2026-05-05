@@ -8,14 +8,14 @@
 # Results upload to Confident AI Test Runs for score trend tracking.
 # A sustained quality drop across runs signals LLM provider drift.
 #
-# Schedule: Every Tuesday 9:15am SGT
+# Schedule: Every Tuesday 10am SGT
 # Cost: ~$2-3 per run (18 golden items + 12 DeepEval cases)
 # ──────────────────────────────────────────────────────────────
 name: LLM Quality Monitor (Weekly)
 
 on:
   schedule:
-    - cron: "15 1 * * 2"  # Every Tuesday 9:15am SGT (UTC+8)
+    - cron: "0 2 * * 2"  # Every Tuesday 10am SGT (UTC+8)
   workflow_dispatch:       # Manual trigger
 
 permissions:

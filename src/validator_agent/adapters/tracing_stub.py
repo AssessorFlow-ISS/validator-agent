@@ -30,14 +30,22 @@ class StubTracingAdapter(TracingPort):
         logger.info("stub_trace_decision", workflow_id=entry.workflow_id, agent_name=entry.agent_name)
 
     async def trace_tool_call(
-        self, *, workflow_id: str, agent_name: str, tool_name: str,
-        input_params: dict[str, Any], output_summary: dict[str, Any],
+        self,
+        *,
+        workflow_id: str,
+        agent_name: str,
+        tool_name: str,
+        input_params: dict[str, Any],
+        output_summary: dict[str, Any],
         latency_ms: float,
     ) -> None:
         record = {
-            "workflow_id": workflow_id, "agent_name": agent_name,
-            "tool_name": tool_name, "input_params": input_params,
-            "output_summary": output_summary, "latency_ms": latency_ms,
+            "workflow_id": workflow_id,
+            "agent_name": agent_name,
+            "tool_name": tool_name,
+            "input_params": input_params,
+            "output_summary": output_summary,
+            "latency_ms": latency_ms,
         }
         self.tool_calls.append(record)
         logger.info("stub_trace_tool_call", workflow_id=workflow_id, tool_name=tool_name)

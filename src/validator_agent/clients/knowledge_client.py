@@ -26,9 +26,7 @@ class KnowledgeClient:
     """gRPC client for the Knowledge Service."""
 
     def __init__(self, url: str | None = None) -> None:
-        self._url = url or os.environ.get(
-            "KNOWLEDGE_SERVICE_GRPC_URL", _DEFAULT_URL
-        )
+        self._url = url or os.environ.get("KNOWLEDGE_SERVICE_GRPC_URL", _DEFAULT_URL)
         self._channel = grpc.aio.insecure_channel(self._url)
         self._stub = knowledge_pb2_grpc.KnowledgeServiceStub(self._channel)
         logger.info("knowledge_client_init", url=self._url)

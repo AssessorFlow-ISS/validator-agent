@@ -36,6 +36,7 @@ class LangfuseTracingAdapter(TracingPort):
         self._traces: dict[str, dict[str, str]] = {}
         try:
             from langfuse import Langfuse
+
             self._client = Langfuse()
             logger.info("langfuse_client_initialized")
         except ImportError:
@@ -62,18 +63,27 @@ class LangfuseTracingAdapter(TracingPort):
                 input=entry.input,
                 output=entry.output,
                 metadata={
-                    "agent_name": entry.agent_name, "decision_type": entry.decision_type,
-                    "confidence_score": entry.confidence_score, "prompt_version": entry.prompt_version,
-                    "model_id": entry.model_id, "reasoning_steps": entry.reasoning_steps,
-                    "grounding_sources": entry.grounding_sources, "assessor_id": entry.assessor_id,
+                    "agent_name": entry.agent_name,
+                    "decision_type": entry.decision_type,
+                    "confidence_score": entry.confidence_score,
+                    "prompt_version": entry.prompt_version,
+                    "model_id": entry.model_id,
+                    "reasoning_steps": entry.reasoning_steps,
+                    "grounding_sources": entry.grounding_sources,
+                    "assessor_id": entry.assessor_id,
                 },
             )
         except Exception:
             logger.warning("langfuse_trace_decision_failed", workflow_id=entry.workflow_id, exc_info=True)
 
     async def trace_tool_call(
-        self, *, workflow_id: str, agent_name: str, tool_name: str,
-        input_params: dict[str, Any], output_summary: dict[str, Any],
+        self,
+        *,
+        workflow_id: str,
+        agent_name: str,
+        tool_name: str,
+        input_params: dict[str, Any],
+        output_summary: dict[str, Any],
         latency_ms: float,
     ) -> None:
         try:
@@ -81,8 +91,11 @@ class LangfuseTracingAdapter(TracingPort):
                 return
             trace_ctx = self._get_or_create_trace(workflow_id)
             tool = self._client.start_observation(
-                trace_context=trace_ctx, name=f"tool/{tool_name}", as_type="tool",
-                input=input_params, output=output_summary,
+                trace_context=trace_ctx,
+                name=f"tool/{tool_name}",
+                as_type="tool",
+                input=input_params,
+                output=output_summary,
                 metadata={"agent_name": agent_name, "latency_ms": latency_ms},
             )
             tool.end()

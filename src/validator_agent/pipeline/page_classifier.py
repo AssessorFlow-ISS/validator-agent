@@ -30,7 +30,9 @@ class PageType(str, Enum):
 
 
 class ClassificationResult(BaseModel):
-    classification: PageType = Field(description="TEXT if coherent prose, VISUAL if scattered labels or diagram content")
+    classification: PageType = Field(
+        description="TEXT if coherent prose, VISUAL if scattered labels or diagram content"
+    )
 
 
 def classify_page(ocr_text: str) -> str:

@@ -11,6 +11,7 @@ the GREEN implementation phase.
 
 Design reference: References/dale_hybrid.md
 """
+
 from __future__ import annotations
 
 import os
@@ -65,10 +66,7 @@ def _make_page_image_map(page_numbers: list[int]) -> dict[int, bytes]:
 
 def _make_batch_items(page_numbers: list[int]) -> list[tuple[int, bytes, str]]:
     """Create batch items: list of (page_number, image_bytes, ocr_text)."""
-    return [
-        (pn, b"fake-image-bytes-" + str(pn).encode(), f"OCR text for page {pn}")
-        for pn in page_numbers
-    ]
+    return [(pn, b"fake-image-bytes-" + str(pn).encode(), f"OCR text for page {pn}") for pn in page_numbers]
 
 
 # ── AC Row 1: Batch Grouping ────
@@ -80,9 +78,7 @@ class TestBatchGrouping:
     @patch("validator_agent.pipeline.ocr_pipeline.VISUAL_BATCH_SIZE", 3)
     @patch("validator_agent.pipeline.ocr_pipeline.classify_page", return_value="VISUAL")
     @patch("validator_agent.pipeline.ocr_pipeline.process_visual_batch")
-    def test_seven_visual_pages_produce_three_batches(
-        self, mock_batch_fn, mock_classify
-    ):
+    def test_seven_visual_pages_produce_three_batches(self, mock_batch_fn, mock_classify):
         """AC: 7 VISUAL pages, BATCH_SIZE=3 -> batches of [3, 3, 1]."""
         pages = _make_pages(7)
         result = _make_ocr_result(pages)
@@ -91,7 +87,9 @@ class TestBatchGrouping:
         # Return benign results for each batch
         mock_batch_fn.return_value = {
             pn: VisualProcessResult(
-                text=f"LLM description for page {pn}", source="llm", attempts=1,
+                text=f"LLM description for page {pn}",
+                source="llm",
+                attempts=1,
             )
             for pn in range(1, 8)
         }
@@ -120,7 +118,9 @@ class TestBatchGrouping:
 
         mock_batch_fn.return_value = {
             pn: VisualProcessResult(
-                text=f"LLM description for page {pn}", source="llm", attempts=1,
+                text=f"LLM description for page {pn}",
+                source="llm",
+                attempts=1,
             )
             for pn in range(1, 7)
         }
@@ -157,7 +157,9 @@ class TestPageTracking:
         def batch_side_effect(batch_items):
             return {
                 item[0]: VisualProcessResult(
-                    text=f"UNIQUE-DESC-PAGE-{item[0]}", source="llm", attempts=1,
+                    text=f"UNIQUE-DESC-PAGE-{item[0]}",
+                    source="llm",
+                    attempts=1,
                 )
                 for item in batch_items
             }
@@ -230,7 +232,9 @@ class TestSinglePageBatch:
 
         mock_batch_fn.return_value = {
             1: VisualProcessResult(
-                text="LLM description for lone page", source="llm", attempts=1,
+                text="LLM description for lone page",
+                source="llm",
+                attempts=1,
             ),
         }
 
@@ -251,9 +255,7 @@ class TestBatchEvalFailureFallback:
     @patch("validator_agent.pipeline.ocr_pipeline.classify_page", return_value="VISUAL")
     @patch("validator_agent.pipeline.ocr_pipeline.process_visual_page")
     @patch("validator_agent.pipeline.ocr_pipeline.process_visual_batch")
-    def test_batch_failure_falls_back_to_single_page(
-        self, mock_batch_fn, mock_single_fn, mock_classify
-    ):
+    def test_batch_failure_falls_back_to_single_page(self, mock_batch_fn, mock_single_fn, mock_classify):
         """AC: batch call raises exception -> falls back to process_visual_page per page."""
         pages = _make_pages(3)
         result = _make_ocr_result(pages)
@@ -264,7 +266,9 @@ class TestBatchEvalFailureFallback:
 
         # Single-page fallback succeeds
         mock_single_fn.return_value = VisualProcessResult(
-            text="fallback description", source="llm", attempts=1,
+            text="fallback description",
+            source="llm",
+            attempts=1,
         )
 
         _enhance_visual_pages(result, page_image_map)
@@ -295,16 +299,16 @@ class TestParallelExecution:
         def batch_side_effect(batch_items):
             return {
                 item[0]: VisualProcessResult(
-                    text=f"desc {item[0]}", source="llm", attempts=1,
+                    text=f"desc {item[0]}",
+                    source="llm",
+                    attempts=1,
                 )
                 for item in batch_items
             }
 
         mock_batch_fn.side_effect = batch_side_effect
 
-        with patch(
-            "validator_agent.pipeline.ocr_pipeline.ThreadPoolExecutor"
-        ) as mock_executor_cls:
+        with patch("validator_agent.pipeline.ocr_pipeline.ThreadPoolExecutor") as mock_executor_cls:
             # Create a real-enough executor mock that works with as_completed
             mock_executor = MagicMock()
             mock_executor_cls.return_value.__enter__ = MagicMock(return_value=mock_executor)
@@ -312,6 +316,7 @@ class TestParallelExecution:
 
             # Create mock futures that as_completed can iterate
             from concurrent.futures import Future
+
             futures = []
             submitted_batches = []
 
@@ -375,9 +380,7 @@ class TestProcessVisualBatch:
         """If any image in batch is flagged harmful, return immediately."""
         batch_items = _make_batch_items([1, 2, 3])
 
-        with patch(
-            "validator_agent.pipeline.visual_understanding.check_image_moderation"
-        ) as mock_mod:
+        with patch("validator_agent.pipeline.visual_understanding.check_image_moderation") as mock_mod:
             # Page 2 is harmful
             def mod_side_effect(img_bytes):
                 if b"2" in img_bytes:

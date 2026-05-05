@@ -1,4 +1,5 @@
 """StubEventPublisherAdapter — records published events for test assertion."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,7 +29,9 @@ class StubEventPublisherAdapter(EventPublisherPort):
         payload: dict[str, Any],
     ) -> None:
         """Record the event without publishing."""
-        self.events.append(PublishedEvent(
-            topic=topic,
-            payload=payload,
-        ))
+        self.events.append(
+            PublishedEvent(
+                topic=topic,
+                payload=payload,
+            )
+        )

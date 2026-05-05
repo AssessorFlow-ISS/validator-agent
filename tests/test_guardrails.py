@@ -11,12 +11,12 @@ Tests cover:
   - GuardrailScanner integration (scan_input, scan_output, prepare_system_prompt)
   - WARN vs BLOCK behavior based on config
 """
+
 from validator_agent.guardrails import GuardrailScanner
 from validator_agent.guardrails.canary import detect_canary_leak, generate_canary, inject_canary
 from validator_agent.guardrails.normalization import normalize_for_evasion
 from validator_agent.guardrails.pii import detect_pii
 from validator_agent.guardrails.prompt_injection import detect_injection
-
 
 # ═══════════════════════════════════════════════════════════════
 # PROMPT INJECTION PATTERNS (11 patterns)

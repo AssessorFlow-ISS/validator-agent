@@ -3,6 +3,7 @@
 Mocks the three component entry points (check_readability, extract_text,
 check_content_safety) to cover the TERMINATE branches and PROCEED path.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -105,9 +106,7 @@ class TestValidateFile:
             patch("validator_agent.pipeline.validator_pipeline.check_readability", return_value=_mrc()),
             patch(
                 "validator_agent.pipeline.validator_pipeline.extract_text",
-                return_value=_ocr(
-                    overall_status="TERMINATE", harmful=True, harmful_detail="nude imagery"
-                ),
+                return_value=_ocr(overall_status="TERMINATE", harmful=True, harmful_detail="nude imagery"),
             ),
             patch("validator_agent.pipeline.validator_pipeline.check_content_safety") as safety_mock,
         ):

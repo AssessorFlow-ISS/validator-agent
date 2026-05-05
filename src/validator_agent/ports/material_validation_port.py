@@ -8,6 +8,7 @@ through the Submission Service gRPC API (``GetMaterials`` and
 ``UpdateMaterialValidation``), replacing the previous direct-DB /
 HTTP-to-API-Server pattern.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
