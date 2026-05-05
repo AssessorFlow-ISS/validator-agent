@@ -1,4 +1,5 @@
 """Tests for FastAPI endpoints (POST /invoke, GET /health, GET /ready)."""
+
 from __future__ import annotations
 
 from httpx import AsyncClient

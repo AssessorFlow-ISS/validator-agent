@@ -1,0 +1,147 @@
+# ──────────────────────────────────────────────────────────────
+# CD — Continuous Delivery (merge to main)
+#
+# Two jobs:
+#   1. Prompt Regression Gate — ONLY when prompts/** or pipeline/** change
+#      Pulls golden dataset from GCS, runs 18 items through real pipeline,
+#      scores with 4 GEval metrics, dual quality gate (threshold + regression)
+#
+#   2. Deploy — Build + push container to GCP Artifact Registry
+#      Tags: commit SHA + latest
+# ──────────────────────────────────────────────────────────────
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag (defaults to commit SHA)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 1. Prompt Regression Gate ───────────────────────────────
+  # Only runs when prompt YAMLs or pipeline code changed.
+  # Skipped for docs, config, test, or adapter-only changes.
+  prompt-regression:
+    name: Prompt Regression Gate
+    runs-on: ubuntu-latest
+    if: |
+      contains(join(github.event.commits.*.modified, ','), 'prompts/') ||
+      contains(join(github.event.commits.*.modified, ','), 'src/validator_agent/pipeline/') ||
+      contains(join(github.event.commits.*.added, ','), 'prompts/') ||
+      contains(join(github.event.commits.*.added, ','), 'src/validator_agent/pipeline/')
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+
+      - run: uv sync --all-extras --dev
+
+      # Authenticate to GCP (for GCS golden dataset + Document AI)
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      # Pull versioned golden dataset from GCS (latest/)
+      - name: Pull golden dataset from GCS
+        run: gsutil -m rsync -r gs://assessorflow-validator-golden/latest/ tests/golden/
+
+      # Run 18 items through real pipeline (Document AI OCR + LLM analyzers)
+      # Scores with 4 GEval metrics: Safety, PII Recall, Faithfulness, Explanation
+      # Dual gate: threshold (>=0.7/0.6) + regression (<10% drop from latest run)
+      # Results auto-upload to Confident AI Test Runs
+      # Gate 1: Threshold — each metric must meet minimum (Safety>=0.7, PII>=0.7, etc.)
+      # Built into DeepEval metric thresholds. Fails test if any metric below threshold.
+      - name: "Gate 1: Threshold (18 items, 4 metrics)"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CONFIDENT_API_KEY: ${{ secrets.CONFIDENT_API_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_LOCATION: asia-southeast1
+          DOCUMENTAI_PROCESSOR_ID: ${{ secrets.DOCUMENTAI_PROCESSOR_ID }}
+        run: |
+          uv run --extra eval deepeval test run \
+            tests/eval/test_golden_regression.py \
+            --identifier "validator_agent_golden_set"
+
+      # Gate 2: Regression — no metric may drop >10% from the latest test run.
+      # Compares current vs previous run on Confident AI.
+      - name: "Gate 2: Regression (<10% drop)"
+        env:
+          CONFIDENT_API_KEY: ${{ secrets.CONFIDENT_API_KEY }}
+        run: uv run --extra eval python scripts/regression_gate.py
+
+  # ── 2. Deploy — Build + Push to Artifact Registry ───────────
+  # Waits for prompt regression to pass (if it ran).
+  # If prompt-regression was skipped (no prompt/pipeline changes), deploy proceeds.
+  deploy:
+    name: Deploy to Artifact Registry
+    needs: prompt-regression
+    permissions:
+      contents: read
+      id-token: write
+    if: always() && (needs.prompt-regression.result == 'success' || needs.prompt-regression.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for Artifact Registry
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
+      - run: gcloud auth configure-docker ${VARS_ARTIFACT_REGISTRY_REGION}-docker.pkg.dev --quiet
+        env:
+          VARS_ARTIFACT_REGISTRY_REGION: ${{ vars.ARTIFACT_REGISTRY_REGION }}
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Determine image tag
+        id: tag
+        run: |
+          if [ -n "${INPUTS_IMAGE_TAG}" ]; then
+            echo "tag=${INPUTS_IMAGE_TAG}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+        env:
+          INPUTS_IMAGE_TAG: ${{ inputs.image_tag }}
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./Containerfile
+          push: true
+          tags: |
+            ${{ vars.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPO }}/${{ vars.ARTIFACT_REGISTRY_REPO }}:${{ steps.tag.outputs.tag }}
+            ${{ vars.ARTIFACT_REGISTRY_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPO }}/${{ vars.ARTIFACT_REGISTRY_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image digest
+        run: |
+          echo "Image pushed successfully!"
+          echo "Image: ${VARS_ARTIFACT_REGISTRY_REGION}-docker.pkg.dev/${VARS_GCP_PROJECT_ID}/${VARS_ARTIFACT_REGISTRY_REPO}/${VARS_ARTIFACT_REGISTRY_REPO}:${STEPS_TAG_OUTPUTS_TAG}"
+        env:
+          VARS_ARTIFACT_REGISTRY_REGION: ${{ vars.ARTIFACT_REGISTRY_REGION }}
+          VARS_GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          VARS_ARTIFACT_REGISTRY_REPO: ${{ vars.ARTIFACT_REGISTRY_REPO }}
+          STEPS_TAG_OUTPUTS_TAG: ${{ steps.tag.outputs.tag }}

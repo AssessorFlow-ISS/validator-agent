@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 # ── Component 1: MRC Models ────
 
+
 class MrcPageResult(BaseModel):
     page: int
     readiness: bool
@@ -28,6 +29,7 @@ class MrcResult(BaseModel):
 
 
 # ── Component 2: OCR Models ────
+
 
 class PageOcrResult(BaseModel):
     page_number: int = Field(description="1-indexed, matches MRC page numbering")
@@ -58,6 +60,7 @@ class OcrResult(BaseModel):
 
 
 # ── Component 3: Content Safety Models ────
+
 
 class Finding(BaseModel):
     page: int
@@ -100,6 +103,7 @@ class ContentSafetyResult(BaseModel):
 
 # ── Validator Agent Overall Result ────
 
+
 class ValidatorResult(BaseModel):
     """End-to-end Validator Agent result — all 3 components combined."""
 
@@ -107,7 +111,9 @@ class ValidatorResult(BaseModel):
     overall_status: str = Field(description="PROCEED, PROCEED_WITH_WARNINGS, or TERMINATE")
     termination_reason: str | None = None
     termination_detail: str | None = None
-    terminated_at_component: str | None = Field(default=None, description="Which component terminated: mrc, ocr, or content_safety")
+    terminated_at_component: str | None = Field(
+        default=None, description="Which component terminated: mrc, ocr, or content_safety"
+    )
 
     # Component results
     mrc: MrcResult | None = None

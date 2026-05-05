@@ -133,10 +133,7 @@ def _enhance_visual_pages(result: OcrResult, page_image_map: dict[int, bytes]) -
     batches: list[list[tuple[int, bytes, str]]] = []
     for i in range(0, len(visual_pages), VISUAL_BATCH_SIZE):
         batch_pages = visual_pages[i : i + VISUAL_BATCH_SIZE]
-        batch_items = [
-            (p.page_number, page_image_map[p.page_number], p.extracted_text)
-            for p in batch_pages
-        ]
+        batch_items = [(p.page_number, page_image_map[p.page_number], p.extracted_text) for p in batch_pages]
         batches.append(batch_items)
 
     # Phase 3: Run batches in parallel with staggered submission
@@ -178,9 +175,7 @@ def _enhance_visual_pages(result: OcrResult, page_image_map: dict[int, bytes]) -
         if vr.harmful_image_detected:
             result.harmful_image_detected = True
             result.harmful_image_detail = (
-                vr.image_moderation.detail
-                if vr.image_moderation
-                else "Harmful image detected"
+                vr.image_moderation.detail if vr.image_moderation else "Harmful image detected"
             )
             result.harmful_image_page = page.page_number
             result.overall_status = "TERMINATE"

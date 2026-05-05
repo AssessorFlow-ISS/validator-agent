@@ -1,23 +1,21 @@
-"""Stage 1: OpenAI Moderation API pre-filter (via Model Broker).
+"""Stage 1: OpenAI Moderation API pre-filter.
 
 Free, fast (~100ms), deterministic. Catches obviously harmful content
-before spending on 3 GPT-4o analyzers. Saves ~$0.20 per rejected document.
+before spending on expensive LLM analyzers.
 
-Routes through Model Broker POST /api/v1/moderate so that all external
-API calls are centralized (ADR-42 invariant #6).
+Calls OpenAI Moderation API directly (not through Model Broker).
+Moderation API is free and not an LLM call — no reason to proxy it.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 
-import httpx
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger(__name__)
+from validator_agent.pipeline.model_registry import get_moderation_client
 
-MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "http://localhost:8010")
+logger = logging.getLogger(__name__)
 
 
 class ModerationCheckResult(BaseModel):
@@ -27,27 +25,34 @@ class ModerationCheckResult(BaseModel):
 
 
 def check_moderation(text: str) -> ModerationCheckResult:
-    """Run OpenAI Moderation API on text via Model Broker."""
+    """Run OpenAI Moderation API on text directly."""
     try:
         truncated = text[:32000]
-
-        response = httpx.post(
-            f"{MODEL_BROKER_URL}/api/v1/moderate",
-            json={
-                "input": truncated,
-                "model": "omni-moderation-latest",
-                "session_id": os.getenv("CURRENT_WORKFLOW_ID", "no-session"),
-                "agent_id": "validator-agent",
-            },
-            timeout=30.0,
+        client = get_moderation_client()
+        response = client.moderations.create(
+            input=truncated,
+            model="omni-moderation-latest",
         )
-        response.raise_for_status()
-        data = response.json()
 
-        return ModerationCheckResult(
-            flagged=data["flagged"],
-            categories=data.get("categories", []),
+        result = response.results[0]
+        flagged_categories = [cat for cat, flagged in result.categories.model_dump().items() if flagged]
+
+        check_result = ModerationCheckResult(
+            flagged=result.flagged,
+            categories=flagged_categories,
         )
+
+        # Langfuse trace (fire-and-forget)
+        from validator_agent.pipeline.llm_client import trace_tool
+
+        trace_tool(
+            tool_name="openai-moderation-prefilter",
+            input_params={"text_length": len(truncated)},
+            output_summary={"flagged": result.flagged, "categories": flagged_categories},
+            latency_ms=0,
+        )
+
+        return check_result
     except Exception as e:
         logger.warning("moderation_prefilter_failed: %s", e)
         return ModerationCheckResult(error=f"Moderation API error: {e}")

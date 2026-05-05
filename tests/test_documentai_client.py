@@ -13,6 +13,7 @@ Covers:
   - _download_from_gcs: bad URI raises ValueError.
   - extract_with_documentai_gcs: unsupported ext + GCS failure.
 """
+
 from __future__ import annotations
 
 import io
@@ -36,9 +37,7 @@ def _build_page(confidences: list[float], text_start: int = 0, text_end: int = 1
         start_index=text_start,
         end_index=text_end,
     )
-    layout = SimpleNamespace(
-        text_anchor=SimpleNamespace(text_segments=[text_segment])
-    )
+    layout = SimpleNamespace(text_anchor=SimpleNamespace(text_segments=[text_segment]))
     return SimpleNamespace(blocks=blocks, layout=layout)
 
 
@@ -158,6 +157,7 @@ class TestParseDocumentToPages:
 class TestBuildResult:
     def test_zero_word_count_sets_failure(self) -> None:
         from validator_agent.pipeline.models import PageOcrResult
+
         pages = [PageOcrResult(page_number=1, extracted_text="", word_count=0)]
         out = dai._build_result("doc.pdf", pages, start_ms=0.0, processing_mode="online")
         assert out.success is False
@@ -165,6 +165,7 @@ class TestBuildResult:
 
     def test_populated_words_marks_success(self) -> None:
         from validator_agent.pipeline.models import PageOcrResult
+
         pages = [PageOcrResult(page_number=1, extracted_text="hi", word_count=1)]
         out = dai._build_result("doc.pdf", pages, start_ms=0.0, processing_mode="online")
         assert out.success is True
@@ -175,8 +176,11 @@ class TestBuildResult:
 class TestExtractWithDocumentAIBytes:
     def test_unsupported_extension_returns_error_result(self) -> None:
         out = dai.extract_with_documentai_bytes(
-            file_bytes=b"raw", file_name="file.docx",
-            project_id="p", location="asia-southeast1", processor_id="pid",
+            file_bytes=b"raw",
+            file_name="file.docx",
+            project_id="p",
+            location="asia-southeast1",
+            processor_id="pid",
         )
         assert out.total_pages == 0
         assert out.error_message and "Unsupported" in out.error_message
@@ -190,18 +194,24 @@ class TestExtractWithDocumentAIBytes:
         ):
             online.return_value = [
                 SimpleNamespace(
-                    page_number=1, extracted_text="hello", word_count=1,
+                    page_number=1,
+                    extracted_text="hello",
+                    word_count=1,
                     confidence=0.9,
                 ),
             ]
             # Make the returned pages look like real PageOcrResult
             from validator_agent.pipeline.models import PageOcrResult
+
             online.return_value = [
                 PageOcrResult(page_number=1, extracted_text="hello", word_count=1),
             ]
             out = dai.extract_with_documentai_bytes(
-                file_bytes=pdf_bytes, file_name="a.pdf",
-                project_id="p", location="loc", processor_id="pid",
+                file_bytes=pdf_bytes,
+                file_name="a.pdf",
+                project_id="p",
+                location="loc",
+                processor_id="pid",
             )
 
         online.assert_called_once()
@@ -214,18 +224,18 @@ class TestExtractWithDocumentAIBytes:
 
         def _online_side_effect(chunk_bytes, mime, resource_name, client):
             # Return pages numbered 1..N from this chunk
-            return [
-                PageOcrResult(page_number=i, extracted_text="t", word_count=1)
-                for i in (1, 2)
-            ]
+            return [PageOcrResult(page_number=i, extracted_text="t", word_count=1) for i in (1, 2)]
 
         with (
             patch.object(dai.documentai, "DocumentProcessorServiceClient"),
             patch.object(dai, "_process_online", side_effect=_online_side_effect) as online,
         ):
             out = dai.extract_with_documentai_bytes(
-                file_bytes=pdf_bytes, file_name="big.pdf",
-                project_id="p", location="loc", processor_id="pid",
+                file_bytes=pdf_bytes,
+                file_name="big.pdf",
+                project_id="p",
+                location="loc",
+                processor_id="pid",
             )
 
         # 32 pages / 15 per chunk → 3 chunks
@@ -244,8 +254,11 @@ class TestExtractWithDocumentAIBytes:
             ) as online,
         ):
             out = dai.extract_with_documentai_bytes(
-                file_bytes=b"raw-png", file_name="img.png",
-                project_id="p", location="loc", processor_id="pid",
+                file_bytes=b"raw-png",
+                file_name="img.png",
+                project_id="p",
+                location="loc",
+                processor_id="pid",
             )
         online.assert_called_once()
         assert out.processing_mode == "online"
@@ -257,8 +270,11 @@ class TestExtractWithDocumentAIBytes:
             patch.object(dai, "_process_online", side_effect=RuntimeError("network")),
         ):
             out = dai.extract_with_documentai_bytes(
-                file_bytes=pdf_bytes, file_name="a.pdf",
-                project_id="p", location="loc", processor_id="pid",
+                file_bytes=pdf_bytes,
+                file_name="a.pdf",
+                project_id="p",
+                location="loc",
+                processor_id="pid",
             )
         assert out.total_pages == 0
         assert out.error_message and "network" in out.error_message
@@ -286,19 +302,23 @@ class TestDownloadFromGcs:
 class TestExtractWithDocumentAiGcs:
     def test_unsupported_ext_short_circuits(self) -> None:
         out = dai.extract_with_documentai_gcs(
-            gcs_input_uri="gs://b/k.docx", file_name="k.docx",
-            project_id="p", location="loc", processor_id="pid",
+            gcs_input_uri="gs://b/k.docx",
+            file_name="k.docx",
+            project_id="p",
+            location="loc",
+            processor_id="pid",
         )
         assert out.total_pages == 0
         assert out.error_message and "Unsupported" in out.error_message
 
     def test_gcs_failure_captured_in_result(self) -> None:
-        with patch.object(
-            dai, "_download_from_gcs", side_effect=RuntimeError("gcs 403")
-        ):
+        with patch.object(dai, "_download_from_gcs", side_effect=RuntimeError("gcs 403")):
             out = dai.extract_with_documentai_gcs(
-                gcs_input_uri="gs://b/a.pdf", file_name="a.pdf",
-                project_id="p", location="loc", processor_id="pid",
+                gcs_input_uri="gs://b/a.pdf",
+                file_name="a.pdf",
+                project_id="p",
+                location="loc",
+                processor_id="pid",
             )
         assert out.total_pages == 0
         assert "Failed to download from GCS" in (out.error_message or "")
@@ -312,8 +332,11 @@ class TestExtractWithDocumentAiGcs:
             patch.object(dai, "extract_with_documentai_bytes", return_value=fake_result) as bp,
         ):
             out = dai.extract_with_documentai_gcs(
-                gcs_input_uri="gs://b/a.pdf", file_name="a.pdf",
-                project_id="p", location="loc", processor_id="pid",
+                gcs_input_uri="gs://b/a.pdf",
+                file_name="a.pdf",
+                project_id="p",
+                location="loc",
+                processor_id="pid",
             )
         bp.assert_called_once()
         assert out.success is True

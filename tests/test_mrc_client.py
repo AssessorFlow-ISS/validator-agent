@@ -8,6 +8,7 @@ Covers:
   - _is_vertex_ai_endpoint() helper.
   - _get_gcp_token() in dev and prod modes.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -20,9 +21,7 @@ from validator_agent.pipeline import mrc_client as mrc_mod
 
 class TestIsVertexAiEndpoint:
     def test_vertex_ai_url_detected(self) -> None:
-        assert mrc_mod._is_vertex_ai_endpoint(
-            "https://asia-southeast1-aiplatform.googleapis.com/v1/projects/..."
-        )
+        assert mrc_mod._is_vertex_ai_endpoint("https://asia-southeast1-aiplatform.googleapis.com/v1/projects/...")
 
     def test_local_url_not_detected(self) -> None:
         assert not mrc_mod._is_vertex_ai_endpoint("http://localhost:8000/infer")
@@ -39,9 +38,7 @@ class TestGetGcpToken:
 
     def test_prod_token_empty_on_exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mrc_mod, "APP_MODE", "prod")
-        with patch.object(
-            mrc_mod.requests, "get", side_effect=requests.exceptions.ConnectionError("x")
-        ):
+        with patch.object(mrc_mod.requests, "get", side_effect=requests.exceptions.ConnectionError("x")):
             assert mrc_mod._get_gcp_token() == ""
 
     def test_dev_uses_gcloud_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,9 +61,7 @@ class TestCallVertexAi:
             with pytest.raises(ConnectionError, match="GCP access token"):
                 mrc_mod._call_vertex_ai(b"bytes", "doc.pdf")
 
-    def test_vertex_ai_sends_bearer_and_returns_json(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_vertex_ai_sends_bearer_and_returns_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mrc_mod, "MRC_ENDPOINT", "https://x-aiplatform.googleapis.com/v1/x")
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"k": "v"}
@@ -141,9 +136,7 @@ class TestCheckReadability:
         assert result.excluded_pages == []
         assert result.blurry_ratio == 0.0
 
-    def test_proceed_with_exclusions_when_some_blurry(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_proceed_with_exclusions_when_some_blurry(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mrc_mod, "MRC_ENDPOINT", "http://localhost:8000/mrc")
         monkeypatch.setattr(mrc_mod, "BLUR_THRESHOLD", 0.30)
         data = {
@@ -166,9 +159,7 @@ class TestCheckReadability:
         assert result.excluded_pages == [9, 10]
         assert result.readable_page_numbers == list(range(1, 9))
 
-    def test_terminate_when_blurry_above_threshold(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_terminate_when_blurry_above_threshold(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mrc_mod, "MRC_ENDPOINT", "http://localhost:8000/mrc")
         monkeypatch.setattr(mrc_mod, "BLUR_THRESHOLD", 0.30)
         data = {
@@ -178,8 +169,7 @@ class TestCheckReadability:
             "readable_pages": 5,
             "unreadable_pages": 5,
             "page_results": [
-                {"page": i, "readiness": i <= 5, "confidence": 0.9 if i <= 5 else 0.1}
-                for i in range(1, 11)
+                {"page": i, "readiness": i <= 5, "confidence": 0.9 if i <= 5 else 0.1} for i in range(1, 11)
             ],
             "file_name": "doc.pdf",
             "inference_time_ms": 50.0,
@@ -208,12 +198,8 @@ class TestCheckReadability:
         assert result.overall_status == "TERMINATE"
         assert result.blurry_ratio == 1.0
 
-    def test_routes_to_vertex_ai_when_aiplatform_url(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            mrc_mod, "MRC_ENDPOINT", "https://x-aiplatform.googleapis.com/v1/predict"
-        )
+    def test_routes_to_vertex_ai_when_aiplatform_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(mrc_mod, "MRC_ENDPOINT", "https://x-aiplatform.googleapis.com/v1/predict")
         data = {
             "overall_readiness": True,
             "overall_confidence": 0.9,

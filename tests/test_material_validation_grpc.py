@@ -3,6 +3,7 @@
 All gRPC calls go through an injected ``SubmissionClient`` mock so
 these tests require no real proto/grpc wiring.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -87,9 +88,7 @@ class TestGrpcMaterialValidationAdapter:
         client.get_materials.assert_awaited_once()
 
     async def test_get_materials_no_source_filter(self) -> None:
-        client = _make_client(
-            materials=[_make_proto(), _make_proto(material_id="m2")]
-        )
+        client = _make_client(materials=[_make_proto(), _make_proto(material_id="m2")])
         adapter = GrpcMaterialValidationAdapter(client=client)
         out = await adapter.get_materials(assessment_id="a-1")
         assert len(out) == 2

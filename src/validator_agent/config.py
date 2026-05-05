@@ -8,14 +8,15 @@ Environment Variables:
     MRC_ADAPTER:       "stub" (default) | "vertex_ai"
     OCR_ADAPTER:       "stub" (default) | "vertex_ai"
     LLM_PROVIDER:      "stub" (default) | "google_ai_studio" | "vertex_ai"
-    KNOWLEDGE_ADAPTER: "stub" (default) | "http" | "grpc"
-    AUDIT_ADAPTER:     "stub" (default) | "postgres" | "grpc"
+    KNOWLEDGE_ADAPTER: "stub" (default) | "grpc"
+    AUDIT_ADAPTER:     "stub" (default) | "pubsub"
     EVENT_ADAPTER:     "stub" (default) | "pubsub"
     STORAGE_ADAPTER:   "stub" (default) | "gcs"
     MATERIAL_ADAPTER:  "grpc" (default) — read materials + write validation
                        decisions via Submission Service gRPC. Set to
                        "stub" in tests to bypass the network.
 """
+
 from __future__ import annotations
 
 import os

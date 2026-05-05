@@ -3,6 +3,7 @@
 Stores all process_material calls in a list so tests can verify that
 validated content was (or was not) forwarded to the Knowledge Service.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,11 +39,13 @@ class StubKnowledgeServiceAdapter(KnowledgeServicePort):
         source: str = "upload",
     ) -> list[str]:
         """Record the call and return stub chunk IDs."""
-        self.calls.append(ProcessMaterialCall(
-            workflow_id=workflow_id,
-            content_text=content_text,
-            source_type=source_type,
-            assessment_id=assessment_id,
-            assessor_id=assessor_id,
-        ))
+        self.calls.append(
+            ProcessMaterialCall(
+                workflow_id=workflow_id,
+                content_text=content_text,
+                source_type=source_type,
+                assessment_id=assessment_id,
+                assessor_id=assessor_id,
+            )
+        )
         return [f"stub-chunk-{i}" for i in range(1, 4)]

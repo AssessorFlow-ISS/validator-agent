@@ -3,6 +3,7 @@
 Covers the three lookup modes (absolute path, base_dir-relative, name search)
 and the FileNotFoundError sad path.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

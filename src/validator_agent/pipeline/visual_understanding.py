@@ -1,8 +1,8 @@
 """Pass 3: Visual understanding — multimodal generator + multi-dimension evaluator.
 
 For pages classified as VISUAL, sends the full page image + OCR text to a
-vision-capable LLM (via Model Broker) to produce a complete, context-aware
-rewrite that integrates text and visual descriptions.
+vision-capable LLM to produce a complete, context-aware rewrite that
+integrates text and visual descriptions.
 
 Uses Evaluator-Optimizer pattern with structured per-dimension feedback.
 
@@ -10,9 +10,8 @@ Also includes image moderation via OpenAI Moderation API — catches harmful/sex
 imagery BEFORE spending on the generator. If flagged, the page is marked as harmful
 and the entire file terminates (no need to proceed to Component 3).
 
-LLM calls route through the Model Broker for fallback chain, budget tracking,
-and access to higher-TPM models. Image moderation stays as direct OpenAI
-(free API, not an LLM call).
+LLM calls use per-agent model registry (model_registry.py) for direct
+provider access. No Model Broker proxy — agents manage their own connections.
 
 Prompt templates loaded from ``prompts/visual_generator.yaml`` and
 ``prompts/visual_evaluator.yaml`` (ADR-39).
@@ -27,16 +26,16 @@ import os
 import re
 from enum import Enum
 
-import httpx
 from pydantic import BaseModel, Field
 
+from validator_agent.pipeline.llm_client import generate_multimodal
+from validator_agent.pipeline.model_registry import get_moderation_client
 from validator_agent.pipeline.prompt_loader import load_prompt
 
 logger = logging.getLogger(__name__)
 
 GENERATOR_MODEL = os.getenv("GENERATOR_MODEL", "gpt-4.1-mini")
 EVALUATOR_MODEL = os.getenv("EVALUATOR_MODEL", "gpt-4.1-mini")
-MODEL_BROKER_URL = os.getenv("MODEL_BROKER_URL", "http://localhost:8010")
 
 # ── Load prompt templates (ADR-39) ────
 
@@ -52,6 +51,7 @@ EVALUATOR_SYSTEM_PROMPT = _EVALUATOR_PROMPT
 
 
 # ── Pydantic models for structured evaluator output ────
+
 
 class Verdict(str, Enum):
     PASS = "PASS"
@@ -69,8 +69,7 @@ class EvaluationResult(BaseModel):
         description="Three dimensions: accuracy, completeness, educational_value"
     )
     retry_prompt_supplement: str | None = Field(
-        default=None,
-        description="Concise fix instructions for the generator if FAIL"
+        default=None, description="Concise fix instructions for the generator if FAIL"
     )
 
 
@@ -109,70 +108,37 @@ def _extract_text_from_messages(messages: list[dict]) -> str:
     return "\n".join(parts)[:4000]  # Truncate for guardrail scanning
 
 
-def _call_model_broker(
+def _call_llm(
     messages: list[dict],
-    task_key: str,
+    component: str,
     *,
     max_tokens: int = 2000,
     temperature: float = 0.2,
-    workflow_id: str | None = None,
-    prompt_version: str = "validator/visual_generator@v1",
     response_format: str | None = None,
     response_schema: dict | None = None,
 ) -> str:
-    """Call the Model Broker with multimodal messages.
+    """Call LLM via llm_client.generate_multimodal() — single funnel for all LLM calls.
 
-    Uses httpx (sync) since visual_understanding.py functions are synchronous.
-
-    Args:
-        messages: OpenAI-format messages array (may contain image_url parts).
-        task_key: TASK_TIER_MAP key for routing.
-        max_tokens: Max completion tokens.
-        temperature: Sampling temperature.
-        workflow_id: Session ID for budget tracking.
-        prompt_version: Prompt version string for audit trail.
-        response_format: Set to "json" for structured output.
-        response_schema: JSON Schema for structured output.
-
-    Returns:
-        LLM completion text.
-
-    Raises:
-        httpx.HTTPStatusError: On non-2xx response from Model Broker.
+    Routes through llm_client so token tracking, cost estimation, and
+    Langfuse tracing are handled in one place for both text and multimodal calls.
     """
-    session_id = workflow_id or os.getenv("CURRENT_WORKFLOW_ID", "unknown")
-    prompt_text = _extract_text_from_messages(messages)
-
-    payload: dict = {
-        "messages": messages,
-        "prompt": prompt_text,
-        "task_key": task_key,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "session_id": session_id,
-        "agent_id": "validator-agent",
-        "prompt_version": prompt_version,
-    }
-    if response_format is not None:
-        payload["response_format"] = response_format
-    if response_schema is not None:
-        payload["response_schema"] = response_schema
-
-    response = httpx.post(
-        f"{MODEL_BROKER_URL}/api/v1/generate",
-        json=payload,
-        timeout=120.0,
+    resp = generate_multimodal(
+        task_key=f"validator.{component}",
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        response_format=response_format,
+        response_schema=response_schema,
+        prompt_version=f"validator/{component}@v1",
     )
-    response.raise_for_status()
-    return response.json()["content"]
+    return resp.content
 
 
 def check_image_moderation(page_image_bytes: bytes) -> ImageModerationResult:
-    """Run OpenAI Moderation API on a page image via Model Broker.
+    """Run OpenAI Moderation API on a page image directly.
 
     Catches harmful, sexual, violent, or hateful imagery before
-    spending on the GPT-4o generator. Routes through Model Broker
-    POST /api/v1/moderate (ADR-42 invariant #6).
+    spending on the expensive generator. Moderation API is free.
     """
     image_b64 = _encode_image_b64(page_image_bytes)
 
@@ -186,28 +152,22 @@ def check_image_moderation(page_image_bytes: bytes) -> ImageModerationResult:
     ]
 
     try:
-        response = httpx.post(
-            f"{MODEL_BROKER_URL}/api/v1/moderate",
-            json={
-                "input": multimodal_input,
-                "model": "omni-moderation-latest",
-                "session_id": os.getenv("CURRENT_WORKFLOW_ID", "no-session"),
-                "agent_id": "validator-agent",
-            },
-            timeout=30.0,
+        client = get_moderation_client()
+        response = client.moderations.create(
+            input=multimodal_input,
+            model="omni-moderation-latest",
         )
-        response.raise_for_status()
-        data = response.json()
 
-        flagged_categories = data.get("categories", [])
+        result = response.results[0]
+        flagged_categories = [cat for cat, flagged in result.categories.model_dump().items() if flagged]
 
         return ImageModerationResult(
-            flagged=data["flagged"],
+            flagged=result.flagged,
             categories=flagged_categories,
-            detail=f"Image moderation flagged: {', '.join(flagged_categories)}" if data["flagged"] else None,
+            detail=f"Image moderation flagged: {', '.join(flagged_categories)}" if result.flagged else None,
         )
     except Exception as e:
-        logger.warning("Image moderation via Model Broker failed: %s", e)
+        logger.warning("Image moderation failed: %s", e)
         return ImageModerationResult(error=f"Image moderation error: {e}")
 
 
@@ -257,13 +217,11 @@ def generate_visual_description(
         },
     ]
 
-    return _call_model_broker(
+    return _call_llm(
         messages,
-        task_key="validator.visual_generation",
+        component="visual_generator",
         max_tokens=2000,
         temperature=0.2,
-        workflow_id=workflow_id,
-        prompt_version="validator/visual_generator@v1",
     ).strip()
 
 
@@ -287,7 +245,8 @@ def evaluate_description(
     # Build the JSON schema from EvaluationResult for structured output.
     # Use the shared cleaner so $ref / $defs / anyOf-null / etc. are resolved
     # recursively. Pre-popping just $defs at top level orphans nested $ref.
-    from af_shared.utils.schema_compat import clean_for_gemini
+    from validator_agent.pipeline.schema_compat import clean_for_gemini
+
     eval_schema = clean_for_gemini(EvaluationResult.model_json_schema())
 
     messages = [
@@ -310,13 +269,11 @@ def evaluate_description(
         },
     ]
 
-    raw = _call_model_broker(
+    raw = _call_llm(
         messages,
-        task_key="validator.visual_evaluation",
+        component="visual_evaluator",
         max_tokens=1500,
         temperature=0,
-        workflow_id=workflow_id,
-        prompt_version="validator/visual_evaluator@v1",
         response_format="json",
         response_schema=eval_schema,
     )
@@ -361,7 +318,9 @@ def process_visual_page(
     # Initial generation
     try:
         generated = generate_visual_description(
-            page_image_bytes, ocr_text, workflow_id=workflow_id,
+            page_image_bytes,
+            ocr_text,
+            workflow_id=workflow_id,
         )
     except Exception as e:
         return VisualProcessResult(
@@ -375,7 +334,9 @@ def process_visual_page(
     for attempt in range(1, MAX_RETRIES + 2):
         try:
             evaluation = evaluate_description(
-                page_image_bytes, generated, workflow_id=workflow_id,
+                page_image_bytes,
+                generated,
+                workflow_id=workflow_id,
             )
         except Exception as e:
             evaluations.append({"attempt": attempt, "error": str(e)})
@@ -399,7 +360,8 @@ def process_visual_page(
         feedback = _format_evaluation_feedback(evaluation)
         try:
             generated = generate_visual_description(
-                page_image_bytes, ocr_text,
+                page_image_bytes,
+                ocr_text,
                 previous_output=generated,
                 retry_feedback=feedback,
                 workflow_id=workflow_id,
@@ -495,21 +457,20 @@ def process_visual_batch(
             return results
 
     # Phase 2: Single Model Broker call for all pages in batch
-    ocr_context = "\n\n".join(
-        f"--- Page {pn} OCR ---\n{ocr[:3000]}"
-        for pn, _, ocr in batch_items
-    )
+    ocr_context = "\n\n".join(f"--- Page {pn} OCR ---\n{ocr[:3000]}" for pn, _, ocr in batch_items)
     system_prompt = _BATCH_GENERATOR_PREAMBLE + GENERATOR_SYSTEM_PROMPT.format(ocr_text=ocr_context)
 
     user_content: list[dict] = [{"type": "text", "text": "Analyze these pages:"}]
     for pn, img_bytes, _ in batch_items:
-        user_content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
-                "detail": "high",
-            },
-        })
+        user_content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
+                    "detail": "high",
+                },
+            }
+        )
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -517,13 +478,11 @@ def process_visual_batch(
     ]
 
     try:
-        raw_text = _call_model_broker(
+        raw_text = _call_llm(
             messages,
-            task_key="validator.visual_generation",
+            component="visual_generator",
             max_tokens=min(2000 * len(batch_items), 16000),
             temperature=0.2,
-            workflow_id=workflow_id,
-            prompt_version="validator/visual_generator@v1",
         ).strip()
     except Exception as e:
         logger.warning("Batch generator failed: %s — falling back to single-page", e)
@@ -590,23 +549,22 @@ def evaluate_visual_batch(
         return {}
 
     # Build evaluation prompt with all descriptions
-    desc_text = "\n\n".join(
-        f"## Page {pn}\n{descriptions[pn]}"
-        for pn in page_numbers
-    )
+    desc_text = "\n\n".join(f"## Page {pn}\n{descriptions[pn]}" for pn in page_numbers)
 
     user_content: list[dict] = [
         {"type": "text", "text": f"Descriptions to evaluate:\n\n{desc_text}"},
     ]
     for pn, img_bytes, _ in batch_items:
         if pn in descriptions:
-            user_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
-                    "detail": "high",
-                },
-            })
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{_encode_image_b64(img_bytes)}",
+                        "detail": "high",
+                    },
+                }
+            )
 
     eval_system = (
         _BATCH_EVALUATOR_PREAMBLE + EVALUATOR_SYSTEM_PROMPT + "\n\n"
@@ -623,13 +581,11 @@ def evaluate_visual_batch(
     ]
 
     try:
-        raw_text = _call_model_broker(
+        raw_text = _call_llm(
             messages,
-            task_key="validator.visual_evaluation",
+            component="visual_evaluator",
             max_tokens=min(1500 * len(page_numbers), 12000),
             temperature=0,
-            workflow_id=workflow_id,
-            prompt_version="validator/visual_evaluator@v1",
             response_format="json",
         ).strip()
     except Exception as e:

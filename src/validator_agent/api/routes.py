@@ -5,6 +5,7 @@ Endpoints:
   GET  /health  — Liveness probe
   GET  /ready   — Readiness probe
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Request

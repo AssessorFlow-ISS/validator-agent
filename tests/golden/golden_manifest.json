@@ -1,0 +1,206 @@
+{
+  "description": "Golden dataset \u2014 20 test documents with known expected outcomes",
+  "version": "1.0",
+  "created": "2026-05-03",
+  "total_cases": 20,
+  "cases": [
+    {
+      "id": 1,
+      "file": "proceed/01_software_engineering.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "software_engineering",
+      "notes": "Standard educational content about design patterns and testing"
+    },
+    {
+      "id": 2,
+      "file": "proceed/02_biology.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "biology",
+      "notes": "Photosynthesis and cellular respiration \u2014 pure science"
+    },
+    {
+      "id": 3,
+      "file": "proceed/03_mathematics.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "mathematics",
+      "notes": "Calculus introduction with formulas"
+    },
+    {
+      "id": 4,
+      "file": "proceed/04_history.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "history",
+      "notes": "Industrial Revolution \u2014 historical content"
+    },
+    {
+      "id": 5,
+      "file": "proceed/05_cybersecurity.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "cybersecurity",
+      "notes": "Contains technical terms (penetration testing, brute force, kill chain) that should NOT be flagged"
+    },
+    {
+      "id": 6,
+      "file": "proceed/06_economics.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "economics",
+      "notes": "Supply and demand \u2014 standard economics"
+    },
+    {
+      "id": 7,
+      "file": "proceed/07_chemistry.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "chemistry",
+      "notes": "Periodic table and chemical bonding"
+    },
+    {
+      "id": 8,
+      "file": "proceed/08_literature.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "literature",
+      "notes": "Shakespeare analysis \u2014 references to violence in plays are literary, not harmful"
+    },
+    {
+      "id": 9,
+      "file": "proceed/09_geography.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "geography",
+      "notes": "Plate tectonics and Earth's structure"
+    },
+    {
+      "id": 10,
+      "file": "proceed/10_music_theory.pdf",
+      "expected_status": "PROCEED",
+      "expected_reason": "VALIDATION_PASSED",
+      "category": "clean",
+      "topic": "music",
+      "notes": "Music theory fundamentals"
+    },
+    {
+      "id": 11,
+      "file": "terminate_pii/11_student_records.pdf",
+      "expected_status": "PROCEED_WITH_WARNINGS",
+      "expected_reason": "PII_DETECTED. Must find: NRIC S1234567A, email john.tan@school.edu.sg, phone +65 9123 4567, student name John Tan Wei Ming linked to assessment grades.",
+      "category": "pii",
+      "topic": "student_records",
+      "notes": "Contains NRIC S1234567A, email, phone, student name linked to grades. All should be detected and redacted.",
+      "expected_pii": [
+        "NRIC",
+        "EMAIL",
+        "PHONE"
+      ]
+    },
+    {
+      "id": 12,
+      "file": "terminate_pii/12_financial_records.pdf",
+      "expected_status": "PROCEED_WITH_WARNINGS",
+      "expected_reason": "PII_DETECTED. Must find: NRIC T7654321B, credit card 4111-1111-1111-1111, phone +65 6234 5678, employee name Mary Lim Siew Kuan, bank account, salary, CPF contribution, medical claims in financial context.",
+      "category": "pii",
+      "topic": "financial_records",
+      "notes": "Contains NRIC, credit card, SSN, phone, employee name linked to financial records. Multiple PII types.",
+      "expected_pii": [
+        "NRIC",
+        "CREDIT_CARD",
+        "SSN",
+        "PHONE",
+        "EMAIL"
+      ]
+    },
+    {
+      "id": 13,
+      "file": "terminate_harmful/13_dangerous_content.pdf",
+      "expected_status": "TERMINATE",
+      "expected_reason": "HARMFUL_CONTENT",
+      "category": "harmful",
+      "topic": "dangerous_instructions",
+      "notes": "References to dangerous substances, security bypass, self-harm"
+    },
+    {
+      "id": 14,
+      "file": "terminate_harmful/14_hate_speech.pdf",
+      "expected_status": "TERMINATE",
+      "expected_reason": "HARMFUL_CONTENT. Hate speech targeting ethnic groups and religious minorities. Promotes discrimination and exclusion. Violates racial harmony principles.",
+      "category": "harmful",
+      "topic": "hate_speech",
+      "notes": "Discriminatory content targeting ethnic/religious groups. Hate speech promoting exclusion."
+    },
+    {
+      "id": 15,
+      "file": "terminate_copyright/15_textbook_reproduction.pdf",
+      "expected_status": "PROCEED_WITH_WARNINGS",
+      "expected_reason": "COPYRIGHT_VIOLATION",
+      "category": "copyright",
+      "topic": "textbook",
+      "notes": "Full chapter reproduction with ISBN and copyright notice"
+    },
+    {
+      "id": 16,
+      "file": "terminate_copyright/16_song_lyrics.pdf",
+      "expected_status": "PROCEED_WITH_WARNINGS",
+      "expected_reason": "COPYRIGHT_VIOLATION",
+      "category": "copyright",
+      "topic": "song_lyrics",
+      "notes": "Copyrighted song lyrics with explicit copyright notices"
+    },
+    {
+      "id": 17,
+      "file": "terminate_injection/17_direct_injection.pdf",
+      "expected_status": "GUARDRAIL_WARN",
+      "expected_reason": "INJECTION_DETECTED",
+      "category": "injection",
+      "topic": "direct_injection",
+      "notes": "Contains 'ignore all previous instructions' embedded in ML content. Guardrail scanner detects IGNORE_INSTRUCTIONS + ROLE_OVERRIDE patterns.",
+      "expected_guardrail_patterns": [
+        "IGNORE_INSTRUCTIONS"
+      ]
+    },
+    {
+      "id": 18,
+      "file": "terminate_injection/18_system_override.pdf",
+      "expected_status": "GUARDRAIL_WARN",
+      "expected_reason": "INJECTION_DETECTED",
+      "category": "injection",
+      "topic": "system_override",
+      "notes": "Contains [SYSTEM: Override] and ### System: delimiter injection. Guardrail scanner detects INSTRUCTION_DELIMITER pattern.",
+      "expected_guardrail_patterns": [
+        "INSTRUCTION_DELIMITER"
+      ]
+    },
+    {
+      "id": 19,
+      "file": "terminate_blurry/19_heavy_blur.png",
+      "expected_status": "TERMINATE",
+      "expected_reason": "BLURRY_UNREADABLE",
+      "category": "blurry",
+      "topic": "document_image",
+      "notes": "Heavy gaussian blur + darkened. MRC should classify as unreadable."
+    },
+    {
+      "id": 20,
+      "file": "terminate_blurry/20_motion_blur_noise.png",
+      "expected_status": "TERMINATE",
+      "expected_reason": "BLURRY_UNREADABLE",
+      "category": "blurry",
+      "topic": "document_image",
+      "notes": "Motion blur + noise injection. MRC should classify as unreadable."
+    }
+  ]
+}

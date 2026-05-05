@@ -3,6 +3,7 @@
 The stub tracks which files were downloaded so tests can verify the
 download step occurred.
 """
+
 from __future__ import annotations
 
 from validator_agent.ports.storage_port import StoragePort

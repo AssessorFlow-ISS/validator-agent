@@ -5,6 +5,7 @@ Covers `_load_files_for_validation`, `_write_material_decisions`, and the
 by api_client (which creates the stub-mode app with no subscription) and
 by focused unit tests that exercise the build-service matrix.
 """
+
 from __future__ import annotations
 
 import os
@@ -144,9 +145,7 @@ class TestLoadFilesForValidation:
         assert mapping == {"doc.pdf": "m-1"}
 
     async def test_grpc_path_with_gcs_storage(self) -> None:
-        stub = _StubMatVal(
-            materials=[_material(storage_path="gs://bucket/real.pdf")]
-        )
+        stub = _StubMatVal(materials=[_material(storage_path="gs://bucket/real.pdf")])
         file_infos, mapping = await _load_files_for_validation(
             material_validation=stub,
             assessment_id="a-1",
@@ -240,11 +239,13 @@ def _response_with(results: list[tuple[str, TerminalSignalStatus, ReasonCode]]) 
 class TestWriteMaterialDecisions:
     async def test_writes_one_per_mapped_file(self) -> None:
         stub = _StubMatVal()
-        resp = _response_with([
-            ("a.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
-            ("b.pdf", TerminalSignalStatus.TERMINATE, ReasonCode.HARMFUL_CONTENT),
-            ("c.pdf", TerminalSignalStatus.PROCEED_WITH_WARNINGS, ReasonCode.PII_DETECTED),
-        ])
+        resp = _response_with(
+            [
+                ("a.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
+                ("b.pdf", TerminalSignalStatus.TERMINATE, ReasonCode.HARMFUL_CONTENT),
+                ("c.pdf", TerminalSignalStatus.PROCEED_WITH_WARNINGS, ReasonCode.PII_DETECTED),
+            ]
+        )
         mapping = {"a.pdf": "mid-a", "b.pdf": "mid-b", "c.pdf": "mid-c"}
         await _write_material_decisions(
             material_validation=stub,
@@ -258,10 +259,12 @@ class TestWriteMaterialDecisions:
 
     async def test_skips_unmapped_files(self) -> None:
         stub = _StubMatVal()
-        resp = _response_with([
-            ("mapped.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
-            ("orphan.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
-        ])
+        resp = _response_with(
+            [
+                ("mapped.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
+                ("orphan.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
+            ]
+        )
         await _write_material_decisions(
             material_validation=stub,
             assessment_id="a-1",
@@ -278,9 +281,11 @@ class TestWriteMaterialDecisions:
             raise RuntimeError("rpc down")
 
         stub.update_material_validation = boom  # type: ignore[assignment]
-        resp = _response_with([
-            ("a.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
-        ])
+        resp = _response_with(
+            [
+                ("a.pdf", TerminalSignalStatus.PROCEED, ReasonCode.VALIDATION_PASSED),
+            ]
+        )
         # Should not raise
         await _write_material_decisions(
             material_validation=stub,
@@ -309,9 +314,7 @@ def _reset_workflow_env():
 
 
 class TestTriggerEndpoint:
-    def test_trigger_with_no_materials_returns_no_materials_terminate(
-        self, _reset_workflow_env
-    ) -> None:
+    def test_trigger_with_no_materials_returns_no_materials_terminate(self, _reset_workflow_env) -> None:
         app = create_app()
         client = TestClient(app)
         # Stub material validation returns empty by default
@@ -329,9 +332,7 @@ class TestTriggerEndpoint:
         assert body["file_results"] == []
         assert body["source_agent"] == "validator-agent"
 
-    def test_trigger_skips_terminate_on_stale_retrigger(
-        self, _reset_workflow_env, monkeypatch
-    ) -> None:
+    def test_trigger_skips_terminate_on_stale_retrigger(self, _reset_workflow_env, monkeypatch) -> None:
         # Force the stub material adapter (default is grpc when env unset
         # the way our prod deploy reads it).
         monkeypatch.setenv("MATERIAL_ADAPTER", "stub")
@@ -367,9 +368,7 @@ class TestTriggerEndpoint:
             if not self.materials:
                 self.materials = list(seeded_materials)
 
-        monkeypatch.setattr(
-            StubMaterialValidationAdapter, "__init__", patched_init
-        )
+        monkeypatch.setattr(StubMaterialValidationAdapter, "__init__", patched_init)
 
         app = create_app()
         client = TestClient(app)
@@ -387,9 +386,7 @@ class TestTriggerEndpoint:
         assert body["terminal_signal"]["reason_code"] == "ALREADY_VALIDATED"
         assert body["file_results"] == []
 
-    def test_trigger_with_inline_materials_runs_pipeline(
-        self, _reset_workflow_env
-    ) -> None:
+    def test_trigger_with_inline_materials_runs_pipeline(self, _reset_workflow_env) -> None:
         app = create_app()
         client = TestClient(app)
         resp = client.post(
@@ -438,10 +435,6 @@ class TestBuildService:
         assert type(ev).__name__ == "StubEventPublisherAdapter"
         assert type(mv).__name__ == "StubMaterialValidationAdapter"
 
-    def test_unknown_llm_provider_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown LLM_PROVIDER"):
-            _build_service(self._config(llm_provider="unknown"))
-
     def test_unknown_event_adapter_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown EVENT_ADAPTER"):
             _build_service(self._config(event_adapter="unknown"))
@@ -450,52 +443,20 @@ class TestBuildService:
         service, *_ = _build_service(self._config(storage_adapter="local"))
         assert service is not None
 
-    def test_http_llm_provider_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.model_broker_http.ModelBrokerHttpAdapter"
-        ) as mock_cls:
-            mock_cls.return_value = MagicMock()
-            service, *_ = _build_service(self._config(llm_provider="http"))
-        assert service is not None
-
-    def test_http_knowledge_service_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.knowledge_service_http.KnowledgeServiceHttpAdapter"
-        ) as mock_cls:
-            mock_cls.return_value = MagicMock()
-            service, *_, ks, _mv = _build_service(
-                self._config(knowledge_adapter="http")
-            )
-        assert service is not None
-
-    def test_postgres_audit_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.decision_audit_postgres.PostgresDecisionAuditAdapter"
-        ) as mock_cls:
-            mock_cls.return_value = MagicMock()
-            service, *_ = _build_service(self._config(audit_adapter="postgres"))
-        assert service is not None
-
     def test_pubsub_event_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.pubsub_event_publisher.PubSubEventPublisherAdapter"
-        ) as mock_cls:
+        with patch("validator_agent.adapters.pubsub_event_publisher.PubSubEventPublisherAdapter") as mock_cls:
             mock_cls.return_value = MagicMock()
             service, ev, *_ = _build_service(self._config(event_adapter="pubsub"))
         assert service is not None
 
     def test_grpc_material_adapter_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.material_validation_grpc.GrpcMaterialValidationAdapter"
-        ) as mock_cls:
+        with patch("validator_agent.adapters.material_validation_grpc.GrpcMaterialValidationAdapter") as mock_cls:
             mock_cls.return_value = MagicMock()
             service, *_ = _build_service(self._config(material_adapter="grpc"))
         assert service is not None
 
     def test_gcs_storage_branch(self) -> None:
-        with patch(
-            "validator_agent.adapters.storage_gcs.GcsStorageAdapter"
-        ) as mock_cls:
+        with patch("validator_agent.adapters.storage_gcs.GcsStorageAdapter") as mock_cls:
             mock_cls.return_value = MagicMock()
             service, *_ = _build_service(self._config(storage_adapter="gcs"))
         assert service is not None

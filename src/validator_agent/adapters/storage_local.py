@@ -7,6 +7,7 @@ storage_path as a relative path within UPLOAD_DIR.
 In production, this would be replaced by a GCS adapter that downloads
 from Cloud Storage using the storage_path as a GCS URI.
 """
+
 from __future__ import annotations
 
 import os
@@ -54,6 +55,4 @@ class LocalStorageAdapter(StoragePort):
                 logger.info("storage_read_by_name", path=str(p), query=storage_path)
                 return p.read_bytes()
 
-        raise FileNotFoundError(
-            f"File not found: {storage_path} (searched {self._base_dir})"
-        )
+        raise FileNotFoundError(f"File not found: {storage_path} (searched {self._base_dir})")

@@ -1,9 +1,10 @@
 """MrcPort — abstract interface for the Material Readiness Checker.
 
-MRC (#11) is Thet's Vertex AI endpoint that classifies documents as
+MRC (#11) is the Vertex AI endpoint that classifies documents as
 readable/unreadable with a confidence score.  The Validator Agent wraps it
 as a tool via this port (Invariant #21, ADR-42).
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

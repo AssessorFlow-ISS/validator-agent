@@ -4,6 +4,7 @@ On PROCEED, the Validator Agent forwards extracted text to the Knowledge
 Service via ProcessMaterial (gRPC 3.2.1) for chunking and embedding.
 The Knowledge Service stores chunks in the Document KB (pgvector).
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

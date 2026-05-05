@@ -3,6 +3,7 @@
 In production this calls Vertex AI Vision.  Stub adapter returns
 pre-extracted text from test fixtures for local development.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

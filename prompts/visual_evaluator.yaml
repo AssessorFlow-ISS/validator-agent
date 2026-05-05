@@ -3,9 +3,10 @@ version: "1"
 model_tier: HIGH
 temperature: 0.0
 max_output_tokens: 2048
+task_key: "validator.visual_evaluation"
 description: "Visual page description evaluator with per-dimension structured feedback"
 created: "2026-04-05"
-task_key: "validator.visual_evaluation"
+updated: "2026-04-05"
 ---
 You are evaluating a description of a page from a learning document.
 You will receive the original page image and a text description of that page.
@@ -21,3 +22,14 @@ Evaluate the description on exactly 3 dimensions:
 3. EDUCATIONAL_VALUE — Is the description detailed enough for an educator
    to generate meaningful assessment questions from it?
    Does it explain relationships and causality, not just list components?
+
+Return your evaluation as a JSON object with this structure:
+{
+  "overall": "PASS" or "FAIL",
+  "dimensions": {
+    "accuracy": {"verdict": "PASS" or "FAIL", "feedback": "specific issue if FAIL, null if PASS"},
+    "completeness": {"verdict": "PASS" or "FAIL", "feedback": "..."},
+    "educational_value": {"verdict": "PASS" or "FAIL", "feedback": "..."}
+  },
+  "retry_prompt_supplement": "concise fix instructions if FAIL, null if PASS"
+}

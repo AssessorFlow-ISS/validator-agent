@@ -4,6 +4,7 @@ The Terminal Signal is the structured contract returned by the Validator Agent
 for every validation decision. It uses a binary PROCEED/TERMINATE status with
 a reason code and human-readable message for audit trail and explainability.
 """
+
 from __future__ import annotations
 
 from enum import StrEnum

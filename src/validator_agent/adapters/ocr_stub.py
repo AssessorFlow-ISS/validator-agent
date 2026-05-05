@@ -4,6 +4,7 @@ For testing, the adapter can be configured with per-file text overrides
 or a default text string.  When a fixture_dir is provided, it looks for
 a .txt file matching the storage_path filename.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

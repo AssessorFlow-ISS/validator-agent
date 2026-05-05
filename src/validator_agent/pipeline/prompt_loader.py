@@ -2,9 +2,7 @@
 
 Reads YAML files from the repo-root ``prompts/`` directory, splitting the
 ``---`` delimited frontmatter from the body text.  This is the single
-canonical loader used by all pipeline modules — the original
-``_load_prompt_template`` in ``domain/content_safety.py`` predates this
-module and handles the same format for the domain layer prompts.
+canonical loader used by all pipeline modules.
 """
 
 from __future__ import annotations

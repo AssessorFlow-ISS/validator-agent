@@ -8,6 +8,7 @@ In event-driven mode (EVENT_ADAPTER=pubsub), the agent subscribes to
 assessorflow.validation.trigger on startup and processes messages
 automatically — no HTTP call needed from the Orchestrator.
 """
+
 from __future__ import annotations
 
 import os
@@ -15,7 +16,6 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
-from af_shared.adapters.factory import get_tracing
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,16 +23,22 @@ from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapte
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
 from validator_agent.adapters.material_validation_stub import StubMaterialValidationAdapter
-from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
+
+# Model Broker adapter removed — LLM calls now use per-agent model_registry.py
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
 from validator_agent.adapters.storage_stub import StubStorageAdapter
+from validator_agent.adapters.tracing_factory import get_tracing
 from validator_agent.api.routes import router
 from validator_agent.api.schemas import FileInfo, ValidationRequest
 from validator_agent.config import ValidatorConfig
 from validator_agent.domain.services import ValidatorService
 from validator_agent.domain.terminal_signal import TerminalSignalStatus
+from validator_agent.ports.decision_audit_port import DecisionAuditPort
+from validator_agent.ports.event_publisher_port import EventPublisherPort
+from validator_agent.ports.knowledge_service_port import KnowledgeServicePort
 from validator_agent.ports.material_validation_port import MaterialValidationPort
+from validator_agent.ports.storage_port import StoragePort
 
 structlog.configure(
     processors=[
@@ -60,37 +66,43 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
     # -- OCR adapter --------------------------------------------------------
     StubOcrAdapter()
 
-    # -- Model Broker adapter -----------------------------------------------
-    if config.llm_provider == "stub":
-        StubModelBrokerAdapter()
-    elif config.llm_provider in ("http", "google_ai_studio", "vertex_ai"):
-        from validator_agent.adapters.model_broker_http import ModelBrokerHttpAdapter
-        ModelBrokerHttpAdapter()
-        logger.info("using_real_model_broker", url=os.environ.get("MODEL_BROKER_URL", "localhost:8010"))
-    else:
-        raise ValueError(f"Unknown LLM_PROVIDER: {config.llm_provider}")
+    # -- LLM Provider -------------------------------------------------------
+    # LLM calls now go through per-agent model_registry.py (no Model Broker).
+    # Model selection is config-driven via LLM_CHEAP_MODEL / LLM_EXPENSIVE_MODEL
+    # env vars. See pipeline/model_registry.py for tier mapping.
+    logger.info(
+        "using_per_agent_model_registry",
+        cheap_model=os.environ.get("LLM_CHEAP_MODEL", "gpt-4.1-mini"),
+        expensive_model=os.environ.get("LLM_EXPENSIVE_MODEL", "gpt-4.1"),
+    )
 
     # -- Knowledge Service adapter ------------------------------------------
-    if config.knowledge_adapter == "http":
-        from validator_agent.adapters.knowledge_service_http import KnowledgeServiceHttpAdapter
-        knowledge_service = KnowledgeServiceHttpAdapter()
-        logger.info("using_http_knowledge_service", url=os.environ.get("KNOWLEDGE_SERVICE_URL", "http://localhost:8020"))
+    knowledge_service: KnowledgeServicePort
+    if config.knowledge_adapter == "grpc":
+        from validator_agent.adapters.knowledge_service_grpc import KnowledgeServiceGrpcAdapter
+
+        knowledge_service = KnowledgeServiceGrpcAdapter()
+        logger.info("using_grpc_knowledge_service", url=os.environ.get("KNOWLEDGE_SERVICE_GRPC_URL", "localhost:9002"))
     else:
         knowledge_service = StubKnowledgeServiceAdapter()
 
     # -- Decision Audit adapter ---------------------------------------------
-    if config.audit_adapter == "postgres":
-        from validator_agent.adapters.decision_audit_postgres import PostgresDecisionAuditAdapter
-        decision_audit = PostgresDecisionAuditAdapter()
-        logger.info("using_postgres_decision_audit")
+    decision_audit: DecisionAuditPort
+    if config.audit_adapter == "pubsub":
+        from validator_agent.adapters.decision_audit_pubsub import PubSubDecisionAuditAdapter
+
+        decision_audit = PubSubDecisionAuditAdapter()
+        logger.info("using_pubsub_decision_audit", topic="assessorflow.audit.decision")
     else:
         decision_audit = StubDecisionAuditAdapter()
 
     # -- Event Publisher adapter --------------------------------------------
+    event_publisher: EventPublisherPort
     if config.event_adapter == "stub":
         event_publisher = StubEventPublisherAdapter()
     elif config.event_adapter in ("pubsub", "real", "emulator"):
         from validator_agent.adapters.pubsub_event_publisher import PubSubEventPublisherAdapter
+
         event_publisher = PubSubEventPublisherAdapter()
         logger.info("using_real_pubsub_adapter")
     else:
@@ -104,23 +116,28 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
         from validator_agent.adapters.material_validation_grpc import (
             GrpcMaterialValidationAdapter,
         )
+
         material_validation = GrpcMaterialValidationAdapter()
         logger.info(
             "using_grpc_material_validation",
             url=os.environ.get(
-                "SUBMISSION_SERVICE_GRPC_URL", "localhost:9001",
+                "SUBMISSION_SERVICE_GRPC_URL",
+                "localhost:9001",
             ),
         )
     else:
         material_validation = StubMaterialValidationAdapter()
 
     # -- Storage adapter ----------------------------------------------------
+    storage: StoragePort
     if config.storage_adapter == "local":
         from validator_agent.adapters.storage_local import LocalStorageAdapter
+
         storage = LocalStorageAdapter()
         logger.info("using_local_storage_adapter", upload_dir=os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads"))
     elif config.storage_adapter == "gcs":
         from validator_agent.adapters.storage_gcs import GcsStorageAdapter
+
         storage = GcsStorageAdapter()
         logger.info("using_gcs_storage_adapter", bucket=os.environ.get("GCS_BUCKET_NAME", "(from URI)"))
     else:
@@ -131,12 +148,12 @@ def _build_service(config: ValidatorConfig) -> tuple[ValidatorService, Any, Any,
     # TRACING_ADAPTER=langfuse → LangfuseTracingAdapter (real Langfuse SDK)
     tracing = get_tracing()
 
-    # ValidatorService wraps Thet's 3-component pipeline.
     # In stub mode, use a keyword-based stub pipeline (no external calls).
-    # In production, Thet's real pipeline runs MRC + Document AI + Content Safety.
+    # In production, the real pipeline runs MRC + Document AI + Content Safety.
     pipeline_fn = None
     if config.llm_provider == "stub":
         from validator_agent.adapters.pipeline_stub import stub_pipeline_fn
+
         pipeline_fn = stub_pipeline_fn
 
     service = ValidatorService(
@@ -165,6 +182,7 @@ def create_app() -> FastAPI:
             from validator_agent.adapters.pubsub_event_publisher import PubSubEventPublisherAdapter
 
             if isinstance(event_publisher, PubSubEventPublisherAdapter):
+
                 async def handle_trigger(payload: dict) -> None:
                     """Process a validation trigger from Pub/Sub.
 
@@ -262,7 +280,11 @@ def create_app() -> FastAPI:
                             "source_agent": "validator-agent",
                         },
                     )
-                    logger.info("validation_complete_published", workflow_id=request.workflow_id, status=response.terminal_signal.status)
+                    logger.info(
+                        "validation_complete_published",
+                        workflow_id=request.workflow_id,
+                        status=response.terminal_signal.status,
+                    )
 
                 await event_publisher.subscribe_and_process("assessorflow.validation.trigger.sub", handle_trigger)
                 logger.info("validator_listening", topic="assessorflow.validation.trigger")
@@ -287,7 +309,10 @@ def create_app() -> FastAPI:
     )
 
     application.add_middleware(
-        CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     application.state.validator_service = service
@@ -406,9 +431,7 @@ async def _load_files_for_validation(
     upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/assessorflow-uploads")
     # Phase 5 (web_research_validation) only processes new web-research
     # materials; the rest of Phase 3's materials were validated earlier.
-    source_filter = (
-        "web_research" if validation_type == "web_research_validation" else None
-    )
+    source_filter = "web_research" if validation_type == "web_research_validation" else None
 
     file_infos: list[FileInfo] = []
     file_to_material_id: dict[str, str] = {}
@@ -418,11 +441,7 @@ async def _load_files_for_validation(
         for entry in inline_materials:
             if not isinstance(entry, dict):
                 continue
-            gcs_path = (
-                entry.get("gcs_path")
-                or entry.get("storage_path")
-                or ""
-            )
+            gcs_path = entry.get("gcs_path") or entry.get("storage_path") or ""
             if not gcs_path:
                 continue
             file_name = entry.get("file_name") or os.path.basename(gcs_path)
@@ -470,7 +489,8 @@ async def _load_files_for_validation(
             resolved_path = os.path.join(upload_dir, storage_path)
         else:
             resolved_path = os.path.join(
-                upload_dir, f"{material.material_id}_{material.file_name}",
+                upload_dir,
+                f"{material.material_id}_{material.file_name}",
             )
 
         file_infos.append(
@@ -510,9 +530,7 @@ async def _all_materials_already_validated(
     publishing TERMINATE. Fails CLOSED to ``False`` on adapter errors so we
     preserve the legacy NO_MATERIALS path on uncertainty.
     """
-    source_filter = (
-        "web_research" if validation_type == "web_research_validation" else None
-    )
+    source_filter = "web_research" if validation_type == "web_research_validation" else None
     try:
         all_materials = await material_validation.get_materials(
             assessment_id=assessment_id,

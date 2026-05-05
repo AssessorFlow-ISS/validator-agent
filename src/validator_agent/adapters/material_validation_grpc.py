@@ -12,6 +12,7 @@ Environment variables:
         for local dev. In-cluster value:
         ``submission-service.af-submission.svc.cluster.local:9001``.
 """
+
 from __future__ import annotations
 
 import structlog

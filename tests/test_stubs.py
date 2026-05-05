@@ -1,4 +1,5 @@
 """Tests for stub adapter behavior."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +7,6 @@ from pathlib import Path
 from validator_agent.adapters.decision_audit_stub import StubDecisionAuditAdapter
 from validator_agent.adapters.event_publisher_stub import StubEventPublisherAdapter
 from validator_agent.adapters.knowledge_service_stub import StubKnowledgeServiceAdapter
-from validator_agent.adapters.model_broker_stub import StubModelBrokerAdapter
 from validator_agent.adapters.mrc_stub import StubMrcAdapter
 from validator_agent.adapters.ocr_stub import StubOcrAdapter
 from validator_agent.adapters.storage_stub import StubStorageAdapter
@@ -96,53 +96,6 @@ class TestStubOcrAdapter:
         )
         result = await adapter.extract_text("some/path/clean_document.pdf")
         assert result.text == "Override wins"
-
-
-class TestStubModelBrokerAdapter:
-    async def test_clean_text_returns_safe(self) -> None:
-        adapter = StubModelBrokerAdapter()
-        import json
-        response = await adapter.generate(
-            prompt="Analyze this educational document about software patterns.",
-            model_tier="HIGH",
-        )
-        data = json.loads(response.content)
-        assert data["is_safe"] is True
-        assert data["reason_code"] == "VALIDATION_PASSED"
-
-    async def test_harmful_keyword_detected(self) -> None:
-        adapter = StubModelBrokerAdapter()
-        import json
-        response = await adapter.generate(
-            prompt="Document text: This extremist propaganda must be stopped.",
-            model_tier="HIGH",
-        )
-        data = json.loads(response.content)
-        assert data["is_safe"] is False
-        assert data["reason_code"] == "HARMFUL_CONTENT"
-
-    async def test_pii_email_detected(self) -> None:
-        adapter = StubModelBrokerAdapter()
-        import json
-        response = await adapter.generate(
-            prompt="Contact john.doe@email.com for more info.",
-            model_tier="HIGH",
-        )
-        data = json.loads(response.content)
-        assert data["is_safe"] is False
-        assert data["reason_code"] == "PII_DETECTED"
-
-    async def test_copyright_detected(self) -> None:
-        adapter = StubModelBrokerAdapter()
-        import json
-        response = await adapter.generate(
-            prompt="ISBN: 978-0-13-468599-1 All rights reserved.",
-            model_tier="HIGH",
-        )
-        data = json.loads(response.content)
-        assert data["is_safe"] is False
-        # Either copyright from ISBN or "All rights reserved" — both should trigger
-        assert data["reason_code"] == "COPYRIGHT_VIOLATION"
 
 
 class TestStubKnowledgeServiceAdapter:

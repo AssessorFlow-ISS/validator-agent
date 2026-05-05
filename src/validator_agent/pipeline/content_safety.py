@@ -79,13 +79,15 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
             termination_reason="HARMFUL_CONTENT",
             termination_detail=f"OpenAI Moderation API pre-filter flagged: {categories}",
             harmful_detected=True,
-            harmful_findings=[Finding(
-                page=0,  # moderation API doesn't give page-level detail
-                type="harmful",
-                detail=f"OpenAI Moderation API flagged content: {categories}",
-                source="moderation_api",
-                confidence="confirmed",
-            )],
+            harmful_findings=[
+                Finding(
+                    page=0,  # moderation API doesn't give page-level detail
+                    type="harmful",
+                    detail=f"OpenAI Moderation API flagged content: {categories}",
+                    source="moderation_api",
+                    confidence="confirmed",
+                )
+            ],
             cleaned_text="",
         )
 
@@ -98,16 +100,15 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
     # so all 4 analyzers errored, but the user-facing summary read like a
     # clean pass.
     analyzer_list = [
-        analyzer_results.analyzer_a, analyzer_results.analyzer_b,
-        analyzer_results.analyzer_c, analyzer_results.analyzer_d,
+        analyzer_results.analyzer_a,
+        analyzer_results.analyzer_b,
+        analyzer_results.analyzer_c,
+        analyzer_results.analyzer_d,
     ]
     error_count = sum(1 for r in analyzer_list if r.error is not None)
     error_messages = [r.error for r in analyzer_list if r.error is not None]
 
-    all_failed = all(
-        result.error is not None and not result.findings
-        for result in analyzer_list
-    )
+    all_failed = all(result.error is not None and not result.findings for result in analyzer_list)
     if all_failed:
         # Include the upstream error in the termination detail so the
         # operator sees WHY (e.g. "API key not valid") instead of just
@@ -182,7 +183,7 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
     cleaned_text = _apply_redactions(pages, pii_findings)
 
     # Determine overall status
-    has_soft_warnings = bool(copyright_findings or misinformation_findings)
+    has_soft_warnings = bool(pii_findings or copyright_findings or misinformation_findings)
 
     if has_soft_warnings:
         overall_status = "PROCEED_WITH_WARNINGS"
@@ -192,23 +193,29 @@ def check_content_safety(pages: list[PageOcrResult]) -> ContentSafetyResult:
     # Build assessor warnings — ready to display in UI, no querying needed
     assessor_warnings = []
     for f in pii_findings:
-        assessor_warnings.append({
-            "page": f.page,
-            "type": "pii_redacted",
-            "detail": f"Found {f.type} and auto-redacted",
-        })
+        assessor_warnings.append(
+            {
+                "page": f.page,
+                "type": "pii_redacted",
+                "detail": f"Found {f.type} and auto-redacted",
+            }
+        )
     for f in copyright_findings:
-        assessor_warnings.append({
-            "page": f.page,
-            "type": "copyright",
-            "detail": f.detail,
-        })
+        assessor_warnings.append(
+            {
+                "page": f.page,
+                "type": "copyright",
+                "detail": f.detail,
+            }
+        )
     for f in misinformation_findings:
-        assessor_warnings.append({
-            "page": f.page,
-            "type": "misinformation",
-            "detail": f.detail,
-        })
+        assessor_warnings.append(
+            {
+                "page": f.page,
+                "type": "misinformation",
+                "detail": f.detail,
+            }
+        )
 
     return ContentSafetyResult(
         overall_status=overall_status,

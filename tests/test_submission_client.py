@@ -2,6 +2,7 @@
 
 Patches the gRPC stub factory so no real channel is opened.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -58,9 +59,7 @@ class TestSubmissionClientLifecycle:
 
     async def test_ensure_stub_reuses_existing(self) -> None:
         client = SubmissionClient(grpc_url="localhost:1")
-        with patch(
-            "validator_agent.clients.submission_client.grpc.aio.insecure_channel"
-        ) as mock_channel:
+        with patch("validator_agent.clients.submission_client.grpc.aio.insecure_channel") as mock_channel:
             mock_channel.return_value = MagicMock()
             stub1 = client._ensure_stub()
             stub2 = client._ensure_stub()

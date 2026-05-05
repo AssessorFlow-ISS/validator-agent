@@ -2,6 +2,7 @@
 
 These are pure functions over pipeline results, so no adapters are required.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -41,9 +42,7 @@ def _mrc(
         total_pages=total,
         readable_pages=readable,
         unreadable_pages=unreadable,
-        page_results=[
-            MrcPageResult(page=i + 1, readiness=True, confidence=0.95) for i in range(total)
-        ],
+        page_results=[MrcPageResult(page=i + 1, readiness=True, confidence=0.95) for i in range(total)],
         file_name="doc.pdf",
         inference_time_ms=12.0,
         overall_status=overall_status,
@@ -66,7 +65,8 @@ def _ocr(
     return OcrResult(
         file_name="doc.pdf",
         total_pages=len(pages) if pages is not None else 1,
-        pages=pages or [PageOcrResult(page_number=1, extracted_text="hi", word_count=1, classification="TEXT", source="ocr")],
+        pages=pages
+        or [PageOcrResult(page_number=1, extracted_text="hi", word_count=1, classification="TEXT", source="ocr")],
         total_word_count=1,
         ocr_time_ms=30.0,
         overall_status=overall_status,
@@ -174,7 +174,14 @@ class TestBuildReasoningStepsOcr:
     def test_ocr_with_visual_pages_processed(self) -> None:
         pages = [
             PageOcrResult(page_number=1, extracted_text="a", word_count=1, classification="TEXT", source="ocr"),
-            PageOcrResult(page_number=2, extracted_text="b", word_count=1, classification="VISUAL", source="llm", visual_attempts=1),
+            PageOcrResult(
+                page_number=2,
+                extracted_text="b",
+                word_count=1,
+                classification="VISUAL",
+                source="llm",
+                visual_attempts=1,
+            ),
         ]
         ocr = _ocr(pages=pages, visual_processed=1)
         safety = _safety()
@@ -234,7 +241,9 @@ class TestBuildReasoningStepsSafety:
             misinformation_detected=True,
             misinformation_findings=[Finding(page=1, type="m", detail="m")],
         )
-        res = _result(mrc=_mrc(), ocr=_ocr(), content_safety=safety, cleaned_text="ok", overall_status="PROCEED_WITH_WARNINGS")
+        res = _result(
+            mrc=_mrc(), ocr=_ocr(), content_safety=safety, cleaned_text="ok", overall_status="PROCEED_WITH_WARNINGS"
+        )
         steps = ValidatorService._build_reasoning_steps(FILE_INFO, res)
         fit = [s for s in steps if s["component"] == "content_fit_decision"][-1]
         assert "PII redacted" in fit["action"]
@@ -243,7 +252,9 @@ class TestBuildReasoningStepsSafety:
 
 
 class TestComputeOverallSignal:
-    def _fr(self, name: str, status: TerminalSignalStatus, code: ReasonCode = ReasonCode.VALIDATION_PASSED) -> FileResult:
+    def _fr(
+        self, name: str, status: TerminalSignalStatus, code: ReasonCode = ReasonCode.VALIDATION_PASSED
+    ) -> FileResult:
         return FileResult(
             file_name=name,
             terminal_signal=TerminalSignal(status=status, reason_code=code, message="m"),

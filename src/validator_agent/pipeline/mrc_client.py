@@ -51,7 +51,9 @@ def _get_gcp_token() -> str:
         try:
             result = subprocess.run(
                 ["gcloud", "auth", "print-access-token"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             return result.stdout.strip()
         except Exception:
@@ -63,8 +65,7 @@ def _call_vertex_ai(file_bytes: bytes, file_name: str) -> dict:
     token = _get_gcp_token()
     if not token:
         raise ConnectionError(
-            "Failed to get GCP access token — "
-            "run 'gcloud auth login' (dev) or check Workload Identity (prod)"
+            "Failed to get GCP access token — run 'gcloud auth login' (dev) or check Workload Identity (prod)"
         )
 
     response = requests.post(
@@ -104,7 +105,7 @@ def check_readability(file_bytes: bytes, file_name: str) -> MrcResult:
     # Golden / test-env escape hatch: if MRC_ENDPOINT is unset, skip the
     # per-page readability check entirely and PROCEED. The hexagonal-layer
     # `mrc_adapter=stub` (services.py path) already covers synthetic
-    # validation decisions; this path exists so Thet's pipeline doesn't
+    # validation decisions; this path exists so the pipeline doesn't
     # crash with `MissingSchema: Invalid URL ''` when there's no MRC
     # service to call. PROD always sets MRC_ENDPOINT to a Vertex AI URL.
     if not MRC_ENDPOINT:
@@ -177,5 +178,22 @@ def check_readability(file_bytes: bytes, file_name: str) -> MrcResult:
         mrc_result.overall_status = "PROCEED_WITH_EXCLUSIONS"
     else:
         mrc_result.overall_status = "PROCEED"
+
+    # Langfuse trace (fire-and-forget)
+    from validator_agent.pipeline.llm_client import trace_tool
+
+    trace_tool(
+        tool_name="mrc-vertex-ai",
+        input_params={"file_name": file_name},
+        output_summary={
+            "overall_status": mrc_result.overall_status,
+            "total_pages": mrc_result.total_pages,
+            "readable_pages": mrc_result.readable_pages,
+            "blurry_ratio": mrc_result.blurry_ratio,
+            "overall_confidence": mrc_result.overall_confidence,
+            "excluded_pages": mrc_result.excluded_pages,
+        },
+        latency_ms=mrc_result.inference_time_ms,
+    )
 
     return mrc_result

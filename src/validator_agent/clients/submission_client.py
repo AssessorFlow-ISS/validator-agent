@@ -27,6 +27,7 @@ Environment variables
     ``host:port`` of the Submission Service gRPC endpoint. Defaults to
     ``localhost:9001`` for local dev.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -68,9 +69,7 @@ class SubmissionClient:
         grpc_url: str | None = None,
         default_timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self._grpc_url = grpc_url or os.environ.get(
-            "SUBMISSION_SERVICE_GRPC_URL", _DEFAULT_GRPC_URL
-        )
+        self._grpc_url = grpc_url or os.environ.get("SUBMISSION_SERVICE_GRPC_URL", _DEFAULT_GRPC_URL)
         self._default_timeout_seconds = default_timeout_seconds
         self._channel: grpc.aio.Channel | None = None
         self._stub: submission_pb2_grpc.SubmissionServiceStub | None = None

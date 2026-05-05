@@ -59,13 +59,44 @@ def synthesize_findings(
     analyzer_results: AllAnalyzerResults,
     pages: list[PageOcrResult],
 ) -> SynthesisResult:
-    """Consolidate findings from 4 analyzers via Model Broker."""
+    """Consolidate findings from 4 analyzers via LLM synthesizer.
+
+    Optimization: if only one analyzer produced findings, skip the LLM
+    synthesizer call (nothing to merge/dedup) and pass findings through
+    directly. This avoids the synthesizer LLM incorrectly discarding
+    single-source findings like PII (only Analyzer C detects PII).
+    """
     all_findings = {
         "analyzer_a": analyzer_results.analyzer_a.findings,
         "analyzer_b": analyzer_results.analyzer_b.findings,
         "analyzer_c": analyzer_results.analyzer_c.findings,
         "analyzer_d": analyzer_results.analyzer_d.findings,
     }
+
+    # Fast path: if only Analyzer C (PII/copyright) has findings, skip synthesis.
+    # Analyzer C is the sole detector for PII and copyright — 1/4 agreement is
+    # expected, not suspicious. The synthesizer LLM incorrectly discards these
+    # single-source findings. Other analyzers (A, B, D) still go through
+    # synthesis for cross-verification.
+    non_c_findings = all_findings["analyzer_a"] + all_findings["analyzer_b"] + all_findings["analyzer_d"]
+    if not non_c_findings and all_findings["analyzer_c"]:
+        # PII type -> redaction token mapping
+        _REDACT_MAP = {
+            "name": "[REDACTED_NAME]",
+            "nric": "[REDACTED_NRIC]",
+            "phone": "[REDACTED_PHONE]",
+            "email": "[REDACTED_EMAIL]",
+            "address": "[REDACTED_ADDRESS]",
+            "financial": "[REDACTED_FINANCIAL]",
+        }
+        merged = []
+        for f in all_findings["analyzer_c"]:
+            f_copy = dict(f)
+            f_copy["confidence"] = "verified"
+            if f_copy.get("original") and not f_copy.get("redacted_to"):
+                f_copy["redacted_to"] = _REDACT_MAP.get(f_copy.get("type"), "[REDACTED]")
+            merged.append(f_copy)
+        return SynthesisResult(findings=merged)
 
     original_text_parts = []
     for page in pages:
@@ -104,7 +135,12 @@ def _merge_without_synthesis(
 ) -> SynthesisResult:
     """Fallback: merge all findings without LLM synthesis."""
     all_findings = []
-    for result in [analyzer_results.analyzer_a, analyzer_results.analyzer_b, analyzer_results.analyzer_c, analyzer_results.analyzer_d]:
+    for result in [
+        analyzer_results.analyzer_a,
+        analyzer_results.analyzer_b,
+        analyzer_results.analyzer_c,
+        analyzer_results.analyzer_d,
+    ]:
         for f in result.findings:
             f_copy = dict(f)
             f_copy["confidence"] = "unverified"
