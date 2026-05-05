@@ -83,10 +83,9 @@ jobs:
 
       - name: zizmor
         uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           advanced-security: false
+          extra-args: --no-online
 
   # ── Stage 2: Automated Tests ───────────────────────────────
   automated-tests:
