@@ -16,10 +16,6 @@ RUN dnf install -y ca-certificates tar gzip findutils poppler-utils && \
 RUN uv python install 3.12 --install-dir /opt/python
 RUN ln -s /opt/python/cpython-3.12* /opt/python/current
 
-# Install af-shared (peer dependency for all agents)
-COPY --from=shared . /tmp/af-shared/
-RUN /opt/python/current/bin/python3.12 -m pip install --no-cache-dir "/tmp/af-shared[langfuse]" && rm -rf /tmp/af-shared
-
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 

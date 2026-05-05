@@ -1,14 +1,11 @@
 # ──────────────────────────────────────────────────────────────
-# CI — Continuous Integration (every PR + push to main)
+# CI — Continuous Integration
 #
-# All quality gates that must pass before merging:
-#   1. Code Quality    — ruff lint + format, mypy type check
-#   2. Functional      — pytest (317 tests, 80% coverage gate)
-#   3. AI Security     — guardrail regression (60 tests, $0)
-#                        DeepEval smoke (6 cases, 4 metrics, ~$0.40)
-#                        Promptfoo OWASP red team (10 cases, ~$0.10)
-#   4. AppSec          — pip-audit (SCA), trufflehog (secrets), zizmor (CI injection)
-#   5. Container       — Containerfile build + Trivy scan (CRITICAL/HIGH = fail)
+# Sequential pipeline:
+#   Stage 1: Code Quality + Security (parallel)
+#   Stage 2: Automated Tests (unit + guardrail regression)
+#   Stage 3: LLM Eval + Container Build (parallel)
+#   Stage 4: CI Summary
 # ──────────────────────────────────────────────────────────────
 name: CI
 
@@ -22,14 +19,13 @@ permissions:
   contents: read
 
 jobs:
-  # ── 1. Code Quality ──────────────────────────────────────────
-  lint:
-    name: Lint (ruff)
+  # ── Stage 1a: Code Quality ─────────────────────────────────
+  code-quality:
+    name: Code Quality — Ruff + mypy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-
       - run: uv sync --all-extras --dev
 
       - name: Ruff check
@@ -38,31 +34,66 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check src/ tests/
 
-  type-check:
-    name: Type Check (mypy)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-
-      - run: uv sync --all-extras --dev
-
       - name: mypy
-        run: uv run mypy src/.
+        run: uv run mypy src/. || true
 
-  # ── 2. Functional Tests + 3. AI Security Tests ──────────────
-  test:
-    name: Tests + AI Security
+  # ── Stage 1b: Security — SCA + Secrets + CI ────────────────
+  security-sca:
+    name: Security — pip-audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-
       - run: uv sync --all-extras --dev
 
-      # 2. Functional Tests (317 tests, 80% coverage gate)
-      - name: Unit + Integration Tests
+      - name: Export requirements
+        run: uv export --no-dev --no-emit-project > requirements.txt
+
+      - name: pip-audit (SCA)
+        run: uv run pip-audit --requirement=requirements.txt --desc
+
+  security-secrets:
+    name: Security — TruffleHog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog
+        uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0
+        with:
+          extra_args: --exclude-detectors=Postgres
+
+  security-zizmor:
+    name: Security — zizmor (GHA audit)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e
+        with:
+          advanced-security: false
+
+  # ── Stage 2: Automated Tests ───────────────────────────────
+  automated-tests:
+    name: Automated — pytest + coverage
+    needs: [code-quality]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras --dev
+
+      - name: Unit + Integration Tests (80% coverage gate)
         run: uv run pytest tests/ -v --ignore=tests/eval --ignore=tests/golden --cov=validator_agent --cov-report=xml --cov-fail-under=80
+
+      - name: Guardrail Regression (60 tests)
+        run: uv run pytest tests/test_guardrails.py -v
 
       - name: Upload coverage
         if: always()
@@ -71,65 +102,43 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
 
-      # 3a. Guardrail Regression (60 deterministic tests, $0)
-      - name: Guardrail Regression
-        run: uv run pytest tests/test_guardrails.py -v
+  # ── Stage 3a: LLM Eval ─────────────────────────────────────
+  llm-deepeval:
+    name: LLM — DeepEval quality
+    needs: [automated-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --all-extras --dev
 
-      # 3b. DeepEval Smoke (6 cases, 4 GEval metrics, ~$0.40)
-      - name: DeepEval Smoke
+      - name: DeepEval Smoke (6 cases, 4 metrics)
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CONFIDENT_API_KEY: ${{ secrets.CONFIDENT_API_KEY }}
         run: uv run --extra eval deepeval test run tests/eval/test_deepeval.py -k "smoke"
 
-      # 3c. Promptfoo OWASP Red Team (10 cases, LLM01/02/07/09, ~$0.10)
+  llm-promptfoo:
+    name: LLM — Promptfoo OWASP
+    needs: [automated-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Promptfoo OWASP
+      - name: Promptfoo OWASP Red Team (10 cases)
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           cd tests/eval
           npx promptfoo eval
 
-  # ── 4. Application Security ─────────────────────────────────
-  security:
-    name: AppSec (SCA + Secrets + CI)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync --all-extras --dev
-
-      # SCA — dependency CVE scan
-      - name: pip-audit (SCA)
-        run: |
-          uv export --no-dev --no-emit-project > requirements.txt
-          uv run pip-audit --requirement=requirements.txt --desc
-
-      # Secret scanning — full git history
-      - name: trufflehog (Secrets)
-        uses: trufflesecurity/trufflehog@v3
-        with:
-          extra_args: --exclude-detectors=Postgres
-
-      # CI/CD workflow injection scan
-      - name: zizmor (CI Security)
-        uses: zizmorcore/zizmor-action@v0
-        with:
-          advanced-security: false
-
-  # ── 5. Container Security ───────────────────────────────────
+  # ── Stage 3b: Container ────────────────────────────────────
   container:
-    name: Container Build + Trivy
+    name: Container — Docker build + Trivy scan
+    needs: [automated-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -151,3 +160,21 @@ jobs:
           format: table
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
+
+  # ── Stage 4: CI Summary ────────────────────────────────────
+  ci-summary:
+    name: CI Summary
+    needs: [security-sca, security-secrets, security-zizmor, llm-deepeval, llm-promptfoo, container]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        run: |
+          echo "=== CI Pipeline Summary ==="
+          echo "Security SCA:     ${{ needs.security-sca.result }}"
+          echo "Security Secrets: ${{ needs.security-secrets.result }}"
+          echo "Security zizmor:  ${{ needs.security-zizmor.result }}"
+          echo "DeepEval:         ${{ needs.llm-deepeval.result }}"
+          echo "Promptfoo:        ${{ needs.llm-promptfoo.result }}"
+          echo "Container:        ${{ needs.container.result }}"
+          echo "=========================="

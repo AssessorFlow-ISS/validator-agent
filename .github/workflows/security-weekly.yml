@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 0
 
       - name: trufflehog
-        uses: trufflesecurity/trufflehog@v3
+        uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0
         with:
           extra_args: --exclude-detectors=Postgres
 
@@ -53,6 +53,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: zizmor
-        uses: zizmorcore/zizmor-action@v0
+        uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e
         with:
           advanced-security: false
