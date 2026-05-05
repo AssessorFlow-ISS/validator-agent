@@ -39,6 +39,9 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
       # Pull versioned golden dataset from GCS
       - name: Pull golden dataset from GCS
         run: gsutil -m rsync -r gs://assessorflow-validator-golden/latest/ tests/golden/
