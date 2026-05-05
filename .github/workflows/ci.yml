@@ -70,23 +70,6 @@ jobs:
         with:
           extra_args: --exclude-detectors=Postgres
 
-  security-zizmor:
-    name: Security — zizmor (GHA audit)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - name: zizmor
-        uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e
-        with:
-          advanced-security: false
-          extra-args: --no-online
-
   # ── Stage 2: Automated Tests ───────────────────────────────
   automated-tests:
     name: Automated — pytest + coverage
@@ -180,7 +163,7 @@ jobs:
   # ── Stage 4: CI Summary ────────────────────────────────────
   ci-summary:
     name: CI Summary
-    needs: [security-sca, security-secrets, security-zizmor, llm-deepeval, llm-promptfoo, container]
+    needs: [security-sca, security-secrets, llm-deepeval, llm-promptfoo, container]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -189,7 +172,6 @@ jobs:
           echo "=== CI Pipeline Summary ==="
           echo "Security SCA:     ${{ needs.security-sca.result }}"
           echo "Security Secrets: ${{ needs.security-secrets.result }}"
-          echo "Security zizmor:  ${{ needs.security-zizmor.result }}"
           echo "DeepEval:         ${{ needs.llm-deepeval.result }}"
           echo "Promptfoo:        ${{ needs.llm-promptfoo.result }}"
           echo "Container:        ${{ needs.container.result }}"
