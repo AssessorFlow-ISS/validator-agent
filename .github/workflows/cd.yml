@@ -30,16 +30,9 @@ concurrency:
 
 jobs:
   # ── 1. Prompt Regression Gate ───────────────────────────────
-  # Only runs when prompt YAMLs or pipeline code changed.
-  # Skipped for docs, config, test, or adapter-only changes.
   prompt-regression:
     name: Prompt Regression Gate
     runs-on: ubuntu-latest
-    if: |
-      contains(join(github.event.commits.*.modified, ','), 'prompts/') ||
-      contains(join(github.event.commits.*.modified, ','), 'src/validator_agent/pipeline/') ||
-      contains(join(github.event.commits.*.added, ','), 'prompts/') ||
-      contains(join(github.event.commits.*.added, ','), 'src/validator_agent/pipeline/')
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
