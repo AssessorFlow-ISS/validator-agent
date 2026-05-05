@@ -6,7 +6,7 @@ max_output_tokens: 2048
 task_key: "validator.content_synthesizer"
 description: "Content safety synthesizer that consolidates findings from 4 parallel analyzers"
 created: "2026-04-05"
-updated: "2026-04-05"
+updated: "2026-05-05"
 max_input_chars: 15000
 ---
 You are a content safety synthesizer. You receive findings from 4 independent analyzers who reviewed the same document, plus the original document text.

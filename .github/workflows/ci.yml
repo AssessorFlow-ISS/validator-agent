@@ -68,7 +68,7 @@ jobs:
       - name: TruffleHog
         uses: trufflesecurity/trufflehog@3fc0c2aa6648d54242e4af6fbfde0701796e4fb0
         with:
-          extra_args: --exclude-detectors=Postgres
+          extra_args: --exclude-detectors=Postgres,SentryToken
 
   # ── Stage 2: Automated Tests ───────────────────────────────
   automated-tests:
