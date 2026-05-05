@@ -83,6 +83,8 @@ jobs:
 
       - name: zizmor
         uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           advanced-security: false
 
@@ -169,7 +171,7 @@ jobs:
           tags: validator-agent:test
 
       - name: Trivy scan (CRITICAL + HIGH = fail)
-        uses: aquasecurity/trivy-action@76071ef0d7ec797419534a183b498b4d6366b4a0 # v0.35.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: validator-agent:test
           format: table
